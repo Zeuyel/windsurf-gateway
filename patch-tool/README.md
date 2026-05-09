@@ -22,7 +22,7 @@ The tool supports three patch targets:
 
 - `settings.json`: user-level config override.
 - `state.vscdb`: Windsurf global state cache, if present.
-- `extension.js`: bundled extension constant replacement.
+- `extension.js`: bundled extension constant replacement plus gateway auth-session fallback.
 
 ## Detect
 
@@ -82,5 +82,6 @@ Default Linux install path:
 
 - `--mode=config` does not require root if your user owns the Windsurf config directory.
 - `--mode=extension` or `--mode=all` may require elevated permissions because `/opt/windsurf` is usually root-owned.
+- If Windsurf still shows `Log in to Windsurf` after gateway `Ping` already returns `200`, rerun with `--mode=all` so the bundled extension gets the auth-session fallback patch.
 - Restart Windsurf after patching.
 - Point `codeium.apiServerUrl` to the gateway root URL, not to `/proxy`; the gateway catches native Windsurf API paths and forwards them with backend pool tokens.

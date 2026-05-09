@@ -8,6 +8,9 @@ const DEFAULT_API_URL = 'https://server.codeium.com'
 const CONFIG_KEY = 'codeium.apiServerUrl'
 const REGISTER_CONFIG_KEY = 'codeium.registerApiServerUrl'
 const DEFAULT_REGISTER_URL = 'https://register.windsurf.com'
+const GATEWAY_PLACEHOLDER_API_KEY = 'sk-ws-01-gateway-placeholder'
+const AUTH_SESSION_FALLBACK_SENTINEL = `id:"windsurf-gateway",accessToken:"${GATEWAY_PLACEHOLDER_API_KEY}"`
+const AUTH_SESSION_FALLBACK_REGEX = /await i\.authentication\.getSession\(n\.WindsurfExtensionMetadata\.getInstance\(\)\.authProviderId,\[[\s\S]*?\],e\)/
 
 function argValue(name) {
   const args = process.argv.slice(2)
@@ -93,8 +96,16 @@ function patchExtension(gateway, registerGateway) {
     content = content.replaceAll(`DEFAULT_REGISTER_API_SERVER_URL=\"${DEFAULT_REGISTER_URL}\"`, `DEFAULT_REGISTER_API_SERVER_URL=\"${registerGateway}\"`)
     content = content.replaceAll(`DEFAULT_REGISTER_API_SERVER_URL="${DEFAULT_REGISTER_URL}"`, `DEFAULT_REGISTER_API_SERVER_URL="${registerGateway}"`)
   }
+  if (!content.includes(AUTH_SESSION_FALLBACK_SENTINEL)) {
+    content = content.replace(AUTH_SESSION_FALLBACK_REGEX, (match) => {
+      return `${match}??{id:"windsurf-gateway",accessToken:"${GATEWAY_PLACEHOLDER_API_KEY}",account:{label:"Gateway",id:"windsurf-gateway"},scopes:[]}`
+    })
+  }
+  if (content.includes(AUTH_SESSION_FALLBACK_SENTINEL) && !before.includes(AUTH_SESSION_FALLBACK_SENTINEL)) {
+    console.log('extension auth bootstrap patched with gateway fallback session')
+  }
   if (content === before) {
-    console.log('extension constants not changed; default endpoint pattern not found')
+    console.log('extension already patched or patch markers not found')
     return false
   }
   fs.writeFileSync(extensionPath, content)
@@ -126,7 +137,7 @@ function patchGlobalState(gateway) {
   
   // Mock windsurfAuthStatus to skip signup
   const mockAuthStatus = {
-    apiKey: 'sk-ws-01-gateway-placeholder',
+    apiKey: GATEWAY_PLACEHOLDER_API_KEY,
     allowedCommandModelConfigsProtoBinaryBase64: []
   }
   db.prepare(`
