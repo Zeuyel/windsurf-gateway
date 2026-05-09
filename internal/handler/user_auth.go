@@ -103,7 +103,13 @@ func (h *UserAuthHandler) ChangePassword(c *gin.Context) {
 }
 
 func (h *UserAuthHandler) RegenerateAPIToken(c *gin.Context) {
-	Success(c, nil)
+	userID := c.GetUint("user_id")
+	token, err := h.svc.RegenerateAPIToken(userID)
+	if err != nil {
+		Error(c, 500, "failed to regenerate api token")
+		return
+	}
+	Success(c, gin.H{"api_token": token})
 }
 
 func (h *UserAuthHandler) ListUsers(c *gin.Context) {

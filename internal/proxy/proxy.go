@@ -60,10 +60,10 @@ type ProxyRequest struct {
 type ProxyResponse struct {
 	StatusCode   int
 	Headers      http.Header
-	Body         []byte
 	Size         int64
 	Latency      time.Duration
 	ErrorMessage string
+	BodySnippet  string
 }
 
 func (p *ProxyService) hasProxyConfigured(token *database.Token) bool {
@@ -97,7 +97,6 @@ func (p *ProxyService) getOrCreateClient(token *database.Token, timeout time.Dur
 	}
 
 	transport := p.client.Transport.(*http.Transport).Clone()
-
 	if p.hasProxyConfigured(token) {
 		proxyURL, err := url.Parse(*token.ProxyURL)
 		if err != nil {
@@ -105,7 +104,6 @@ func (p *ProxyService) getOrCreateClient(token *database.Token, timeout time.Dur
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
 
@@ -113,127 +111,103 @@ func (p *ProxyService) getOrCreateClient(token *database.Token, timeout time.Dur
 		Timeout:   timeout,
 		Transport: transport,
 	}
-
 	p.clientPool[poolKey] = client
 	return client, nil
 }
 
-func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w http.ResponseWriter) ([]byte, error) {
+func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w http.ResponseWriter) (*ProxyResponse, error) {
 	startTime := time.Now()
 
 	targetURL, err := p.buildTargetURL(req.TenantAddress, req.Path)
 	if err != nil {
-		return nil, fmt.Errorf("build target URL: %w", err)
+		return &ProxyResponse{StatusCode: http.StatusBadGateway, Latency: time.Since(startTime), ErrorMessage: err.Error()}, fmt.Errorf("build target URL: %w", err)
 	}
 
-	client, err := p.getOrCreateClient(req.Token, 30*time.Minute)
+	client, err := p.getOrCreateClient(req.Token, p.config.Proxy.Timeout)
 	if err != nil {
-		return nil, fmt.Errorf("create client: %w", err)
+		return &ProxyResponse{StatusCode: http.StatusBadGateway, Latency: time.Since(startTime), ErrorMessage: err.Error()}, fmt.Errorf("create client: %w", err)
 	}
 
 	httpReq, err := p.createRequest(ctx, req, targetURL)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return &ProxyResponse{StatusCode: http.StatusBadGateway, Latency: time.Since(startTime), ErrorMessage: err.Error()}, fmt.Errorf("create request: %w", err)
 	}
 
-	logger.Infof("[Proxy] Streaming %s %s", req.Method, targetURL)
+	logger.Infof("[Proxy] Forwarding %s %s via token=%s", req.Method, targetURL, req.Token.ID)
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		logger.Errorf("[Proxy] Request failed: %v, latency: %v", err, time.Since(startTime))
-		return nil, fmt.Errorf("forward request: %w", err)
+		latency := time.Since(startTime)
+		logger.Errorf("[Proxy] Request failed: %v, latency=%v", err, latency)
+		return &ProxyResponse{StatusCode: http.StatusBadGateway, Latency: latency, ErrorMessage: err.Error()}, fmt.Errorf("forward request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		logger.Warnf("[Proxy] Token banned: %d", resp.StatusCode)
-		return nil, fmt.Errorf("token banned: status %d", resp.StatusCode)
+	copyResponseHeaders(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return nil, fmt.Errorf("streaming not supported")
-	}
-
-	streamCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
-
-	bufferSize := 16 * 1024
-	if strings.Contains(req.Path, "chat") || strings.Contains(req.Path, "stream") {
+	bufferSize := 32 * 1024
+	if strings.Contains(strings.ToLower(req.Path), "stream") || strings.Contains(strings.ToLower(req.Path), "chat") {
 		bufferSize = 8 * 1024
 	}
 	buffer := make([]byte, bufferSize)
-	var captured []byte
-	totalBytes := int64(0)
-	lastDataTime := time.Now()
-	var headersWritten bool
+	var snippet bytes.Buffer
+	var totalBytes int64
 
 	for {
-		select {
-		case <-streamCtx.Done():
-			logger.Infof("[Proxy] Stream cancelled: %d bytes, %v", totalBytes, time.Since(startTime))
-			return captured, nil
-		default:
-		}
-
-		if time.Since(lastDataTime) > 2*time.Minute {
-			logger.Infof("[Proxy] Stream idle timeout")
-			break
-		}
-
-		n, err := resp.Body.Read(buffer)
+		n, readErr := resp.Body.Read(buffer)
 		if n > 0 {
-			lastDataTime = time.Now()
+			chunk := buffer[:n]
 			totalBytes += int64(n)
-			captured = append(captured, buffer[:n]...)
-
-			if !headersWritten {
-				for key, values := range resp.Header {
-					if strings.ToLower(key) == "content-length" {
-						continue
-					}
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
+			if snippet.Len() < 4096 {
+				remaining := 4096 - snippet.Len()
+				if remaining > n {
+					remaining = n
 				}
-				w.Header().Set("Transfer-Encoding", "chunked")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Connection", "keep-alive")
-				w.WriteHeader(resp.StatusCode)
-				headersWritten = true
+				snippet.Write(chunk[:remaining])
 			}
-
-			if _, err := w.Write(buffer[:n]); err != nil {
-				logger.Infof("[Proxy] Client disconnected: %d bytes", totalBytes)
-				return captured, nil
+			if _, writeErr := w.Write(chunk); writeErr != nil {
+				latency := time.Since(startTime)
+				return &ProxyResponse{
+					StatusCode:   resp.StatusCode,
+					Headers:      resp.Header,
+					Size:         totalBytes,
+					Latency:      latency,
+					ErrorMessage: writeErr.Error(),
+					BodySnippet:  snippet.String(),
+				}, fmt.Errorf("write response: %w", writeErr)
 			}
-			flusher.Flush()
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 
-		if err != nil {
-			if err == io.EOF {
-				if !headersWritten {
-					for key, values := range resp.Header {
-						if strings.ToLower(key) == "content-length" {
-							continue
-						}
-						for _, value := range values {
-							w.Header().Add(key, value)
-						}
-					}
-					w.Header().Set("Transfer-Encoding", "chunked")
-					w.WriteHeader(resp.StatusCode)
-				}
-				logger.Infof("[Proxy] Stream complete: %d bytes, %v", totalBytes, time.Since(startTime))
-				break
+		if readErr != nil {
+			if readErr == io.EOF {
+				return &ProxyResponse{
+					StatusCode:  resp.StatusCode,
+					Headers:     resp.Header,
+					Size:        totalBytes,
+					Latency:     time.Since(startTime),
+					BodySnippet: snippet.String(),
+				}, nil
 			}
-			logger.Errorf("[Proxy] Stream read error: %v", err)
-			return captured, fmt.Errorf("stream read: %w", err)
+			latency := time.Since(startTime)
+			return &ProxyResponse{
+				StatusCode:   resp.StatusCode,
+				Headers:      resp.Header,
+				Size:         totalBytes,
+				Latency:      latency,
+				ErrorMessage: readErr.Error(),
+				BodySnippet:  snippet.String(),
+			}, fmt.Errorf("read upstream response: %w", readErr)
 		}
 	}
-
-	flusher.Flush()
-	return captured, nil
 }
 
 func (p *ProxyService) buildTargetURL(tenantAddress, path string) (string, error) {
@@ -272,12 +246,10 @@ func (p *ProxyService) buildTargetURL(tenantAddress, path string) (string, error
 		} else {
 			finalPath = "/" + cleanTarget
 		}
+	} else if cleanTarget == "" {
+		finalPath = basePath + "/"
 	} else {
-		if cleanTarget == "" {
-			finalPath = basePath + "/"
-		} else {
-			finalPath = basePath + "/" + cleanTarget
-		}
+		finalPath = basePath + "/" + cleanTarget
 	}
 
 	finalPath = strings.ReplaceAll(finalPath, "//", "/")
@@ -305,7 +277,7 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 	}
 
 	for key, values := range req.Headers {
-		if p.shouldSkipHeader(key) {
+		if p.shouldSkipRequestHeader(key) {
 			continue
 		}
 		for _, value := range values {
@@ -315,38 +287,64 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 
 	if req.Token != nil && req.Token.Token != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+req.Token.Token)
+		httpReq.Header.Set("X-Api-Key", req.Token.Token)
 	}
 
-	if targetURL, err := url.Parse(req.TenantAddress); err == nil {
-		httpReq.Header.Set("host", targetURL.Host)
-		httpReq.Host = targetURL.Host
+	parsedTarget, err := url.Parse(targetURL)
+	if err == nil {
+		httpReq.Host = parsedTarget.Host
+		httpReq.Header.Set("Host", parsedTarget.Host)
 	}
 
-	if req.UserAgent != "" {
-		httpReq.Header.Set("User-Agent", req.UserAgent)
+	userAgent := strings.TrimSpace(req.UserAgent)
+	if userAgent == "" && p.config.Subscription.UserAgent != "" {
+		userAgent = p.config.Subscription.UserAgent
+	}
+	if userAgent != "" {
+		httpReq.Header.Set("User-Agent", userAgent)
 	}
 
 	if req.ClientIP != "" {
-		httpReq.Header.Set("X-Forwarded-For", req.ClientIP)
 		httpReq.Header.Set("X-Real-IP", req.ClientIP)
+		existing := strings.TrimSpace(req.Headers.Get("X-Forwarded-For"))
+		if existing != "" {
+			httpReq.Header.Set("X-Forwarded-For", existing+", "+req.ClientIP)
+		} else {
+			httpReq.Header.Set("X-Forwarded-For", req.ClientIP)
+		}
 	}
 
 	return httpReq, nil
 }
 
-func (p *ProxyService) shouldSkipHeader(key string) bool {
-	key = strings.ToLower(key)
-	skipHeaders := []string{
-		"proxy-connection", "proxy-authenticate", "proxy-authorization",
-		"authorization", "te", "trailers", "transfer-encoding",
-		"cf-ray", "cf-visitor", "cf-connecting-ip", "cf-ipcountry",
+func (p *ProxyService) shouldSkipRequestHeader(key string) bool {
+	switch strings.ToLower(key) {
+	case "authorization", "x-api-key", "host", "proxy-connection", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "connection", "x-forwarded-for", "x-real-ip":
+		return true
+	default:
+		return false
 	}
-	for _, h := range skipHeaders {
-		if key == h {
-			return true
+}
+
+func copyResponseHeaders(dst http.Header, src http.Header) {
+	for key, values := range src {
+		if shouldSkipResponseHeader(key) {
+			continue
+		}
+		dst.Del(key)
+		for _, value := range values {
+			dst.Add(key, value)
 		}
 	}
-	return false
+}
+
+func shouldSkipResponseHeader(key string) bool {
+	switch strings.ToLower(key) {
+	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade":
+		return true
+	default:
+		return false
+	}
 }
 
 func GetClientIP(r *http.Request) string {

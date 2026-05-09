@@ -16,7 +16,14 @@ func NewRequestRecordHandler(svc *service.RequestRecordService) *RequestRecordHa
 
 func (h *RequestRecordHandler) List(c *gin.Context) {
 	page, pageSize := getPageParams(c)
-	logs, total, err := h.svc.List(page, pageSize)
+	filter := service.RequestLogFilter{
+		Query:           c.Query("q"),
+		TokenID:         c.Query("token_id"),
+		Username:        c.Query("username"),
+		FailureCategory: c.Query("failure_category"),
+		StatusCode:      service.ParseStatusCodeFilter(c.Query("status_code")),
+	}
+	logs, total, err := h.svc.List(page, pageSize, filter)
 	if err != nil {
 		Error(c, 500, err.Error())
 		return

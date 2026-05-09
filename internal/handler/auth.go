@@ -67,6 +67,10 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	user.Email = req.Email
+	if err := h.svc.UpdateUser(userID, map[string]interface{}{"email": req.Email}); err != nil {
+		Error(c, 500, "failed to update profile")
+		return
+	}
 	Success(c, user)
 }
 

@@ -112,6 +112,14 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 			userAuth.POST("/refresh", handlers.UserAuth.Refresh)
 		}
 
+		smartLogin := api.Group("/smart-login")
+		{
+			smartLogin.POST("/sniff", handlers.SmartLogin.SniffLoginMethod)
+			smartLogin.POST("/firebase", handlers.SmartLogin.FirebaseLogin)
+			smartLogin.POST("/firebase/refresh", handlers.SmartLogin.FirebaseRefreshToken)
+			smartLogin.POST("/devin", handlers.SmartLogin.DevinLogin)
+		}
+
 		api.GET("/invitation-codes/validate", handlers.InvitationCode.Validate)
 		api.GET("/system/version", handlers.System.GetVersion)
 
@@ -136,15 +144,16 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 			{
 				tokens.GET("", handlers.Token.List)
 				tokens.POST("", handlers.Token.Create)
-				tokens.GET("/:id", handlers.Token.Get)
-				tokens.PUT("/:id", handlers.Token.Update)
-				tokens.DELETE("/:id", handlers.Token.Delete)
+				tokens.POST("/smart-login", handlers.Token.SmartLoginImport)
 				tokens.GET("/validate", handlers.Token.Validate)
 				tokens.GET("/stats", handlers.Token.Stats)
 				tokens.POST("/batch-import", handlers.Token.BatchImport)
+				tokens.POST("/batch-refresh-auth-session", handlers.Token.BatchRefreshAuthSession)
+				tokens.GET("/:id", handlers.Token.Get)
+				tokens.PUT("/:id", handlers.Token.Update)
+				tokens.DELETE("/:id", handlers.Token.Delete)
 				tokens.GET("/:id/users", handlers.Token.GetTokenUsers)
 				tokens.GET("/:id/ban-reason", handlers.Token.GetBanReason)
-				tokens.POST("/batch-refresh-auth-session", handlers.Token.BatchRefreshAuthSession)
 			}
 
 			users := protected.Group("/users")

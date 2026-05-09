@@ -225,6 +225,17 @@ func (s *UserAuthService) GetUserByToken(apiToken string) (*database.User, error
 	return &user, nil
 }
 
+func (s *UserAuthService) RegenerateAPIToken(userID uint) (string, error) {
+	apiToken, err := generateUserToken()
+	if err != nil {
+		return "", err
+	}
+	if err := s.db.Model(&database.User{}).Where("id = ?", userID).Update("api_token", apiToken).Error; err != nil {
+		return "", err
+	}
+	return apiToken, nil
+}
+
 func generateUserToken() (string, error) {
 	bytes := make([]byte, 24)
 	if _, err := rand.Read(bytes); err != nil {

@@ -113,6 +113,10 @@ func (s *AuthService) GetUserByID(id uint) (*database.User, error) {
 	return &user, nil
 }
 
+func (s *AuthService) UpdateUser(userID uint, updates map[string]interface{}) error {
+	return s.db.Model(&database.User{}).Where("id = ?", userID).Updates(updates).Error
+}
+
 func generateAPIKey() (string, error) {
 	bytes := make([]byte, 24)
 	if _, err := rand.Read(bytes); err != nil {

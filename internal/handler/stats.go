@@ -24,8 +24,8 @@ func (h *StatsHandler) Overview(c *gin.Context) {
 }
 
 func (h *StatsHandler) Trend(c *gin.Context) {
-	days := 7
-	data, err := h.svc.GetTrend(days)
+	rangeLabel := c.DefaultQuery("range", "7d")
+	data, err := h.svc.GetTrend(rangeLabel)
 	if err != nil {
 		Error(c, 500, err.Error())
 		return

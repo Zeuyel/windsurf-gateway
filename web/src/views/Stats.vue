@@ -1,101 +1,91 @@
 <template>
   <div class="stats-page">
-    <el-row :gutter="20" class="stats-row">
-      <el-col :xs="24" :sm="12" :md="8" :lg="6">
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #409eff;">
-              <el-icon><DataLine /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-label">总请求数</div>
-              <div class="stat-value">{{ stats.totalRequests || 0 }}</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="6">
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #67c23a;">
-              <el-icon><SuccessFilled /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-label">成功请求</div>
-              <div class="stat-value">{{ stats.successRequests || 0 }}</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="6">
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #f56c6c;">
-              <el-icon><CircleCloseFilled /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-label">失败请求</div>
-              <div class="stat-value">{{ stats.failedRequests || 0 }}</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="6">
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #e6a23c;">
-              <el-icon><Timer /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-label">平均延迟</div>
-              <div class="stat-value">{{ avgLatency }}ms</div>
-            </div>
-          </div>
+    <el-row :gutter="16" class="summary-grid">
+      <el-col :xs="24" :sm="12" :lg="4" v-for="card in summaryCards" :key="card.label">
+        <el-card class="summary-card" shadow="hover">
+          <div class="summary-label">{{ card.label }}</div>
+          <div class="summary-value">{{ card.value }}</div>
+          <div class="summary-meta">{{ card.meta }}</div>
         </el-card>
       </el-col>
     </el-row>
 
-    <el-row :gutter="20" class="content-row">
+    <el-row :gutter="16" class="panel-grid">
       <el-col :xs="24" :lg="16">
-        <el-card class="chart-card">
+        <el-card shadow="never">
           <template #header>
-            <div class="card-header">
-              <span>请求趋势</span>
-              <el-radio-group v-model="timeRange" size="small" @change="updateChart">
-                <el-radio-button label="24h">24小时</el-radio-button>
-                <el-radio-button label="7d">7天</el-radio-button>
-                <el-radio-button label="30d">30天</el-radio-button>
+            <div class="panel-header">
+              <span>成功 / 失败趋势</span>
+              <el-radio-group v-model="timeRange" size="small" @change="loadTrend">
+                <el-radio-button label="24h">24h</el-radio-button>
+                <el-radio-button label="7d">7d</el-radio-button>
+                <el-radio-button label="30d">30d</el-radio-button>
               </el-radio-group>
             </div>
           </template>
-          <div ref="trendChartRef" class="chart-container"></div>
+          <div ref="trendChartRef" class="chart-box"></div>
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="8">
-        <el-card class="chart-card">
+        <el-card shadow="never">
           <template #header>
-            <span>请求分布</span>
+            <span>请求方法分布</span>
           </template>
-          <div ref="pieChartRef" class="chart-container"></div>
+          <div ref="methodChartRef" class="chart-box small"></div>
         </el-card>
       </el-col>
     </el-row>
 
-    <el-row :gutter="20" class="content-row">
+    <el-row :gutter="16" class="panel-grid">
       <el-col :xs="24" :lg="12">
-        <el-card class="chart-card">
+        <el-card shadow="never">
           <template #header>
-            <span>Token 使用排名</span>
+            <span>Token 使用次数</span>
           </template>
-          <div ref="tokenChartRef" class="chart-container"></div>
+          <div ref="usageChartRef" class="chart-box small"></div>
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="12">
-        <el-card class="chart-card">
+        <el-card shadow="never">
           <template #header>
-            <span>用户活跃度</span>
+            <span>Token 失败次数</span>
           </template>
-          <div ref="userChartRef" class="chart-container"></div>
+          <div ref="failureChartRef" class="chart-box small"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16" class="panel-grid">
+      <el-col :xs="24" :lg="12">
+        <el-card shadow="never">
+          <template #header>
+            <span>最近错误</span>
+          </template>
+          <el-table :data="stats.recent_errors || []" stripe>
+            <el-table-column prop="created_at" label="时间" min-width="160" />
+            <el-table-column prop="token_name" label="Token" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="status_code" label="状态" width="90" />
+            <el-table-column prop="failure_category" label="分类" min-width="140" />
+            <el-table-column prop="error_message" label="原因" min-width="220" show-overflow-tooltip />
+          </el-table>
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :lg="12">
+        <el-card shadow="never">
+          <template #header>
+            <span>高频用户</span>
+          </template>
+          <el-table :data="stats.top_users || []" stripe>
+            <el-table-column prop="username" label="用户" min-width="160" />
+            <el-table-column prop="requests" label="请求数" width="120" />
+          </el-table>
+          <div class="category-list">
+            <div class="category-title">最近错误分类</div>
+            <div v-for="item in stats.error_categories || []" :key="item.failure_category" class="category-item">
+              <span>{{ item.failure_category }}</span>
+              <strong>{{ item.count }}</strong>
+            </div>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -103,339 +93,249 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import client from '../api/client'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import * as echarts from 'echarts'
+import dayjs from 'dayjs'
+import client from '../api/client'
 
-const stats = ref({
-  totalRequests: 0,
-  successRequests: 0,
-  failedRequests: 0,
-  totalLatency: 0
-})
-
-const timeRange = ref('24h')
+const stats = ref({})
+const timeRange = ref('7d')
 const trendChartRef = ref(null)
-const pieChartRef = ref(null)
-const tokenChartRef = ref(null)
-const userChartRef = ref(null)
+const methodChartRef = ref(null)
+const usageChartRef = ref(null)
+const failureChartRef = ref(null)
 
 let trendChart = null
-let pieChart = null
-let tokenChart = null
-let userChart = null
+let methodChart = null
+let usageChart = null
+let failureChart = null
 
-const avgLatency = computed(() => {
-  if (!stats.value.totalRequests || stats.value.totalRequests === 0) return 0
-  return Math.round(stats.value.totalLatency / stats.value.totalRequests)
-})
+const summaryCards = computed(() => [
+  {
+    label: '总请求',
+    value: stats.value.total_requests || 0,
+    meta: `Token ${stats.value.total_tokens || 0}`,
+  },
+  {
+    label: '成功请求',
+    value: stats.value.success_requests || 0,
+    meta: `可用 ${stats.value.available_tokens || 0}`,
+  },
+  {
+    label: '失败请求',
+    value: stats.value.failed_requests || 0,
+    meta: `冷却 ${stats.value.cooldown_tokens || 0}`,
+  },
+  {
+    label: '平均延迟',
+    value: `${Math.round(stats.value.avg_latency_ms || 0)} ms`,
+    meta: `并发 ${stats.value.total_active_requests || 0}`,
+  },
+  {
+    label: '负载策略',
+    value: stats.value.load_balancer_strategy || 'round_robin',
+    meta: `耗尽 ${stats.value.exhausted_tokens || 0}`,
+  },
+  {
+    label: '活跃用户',
+    value: stats.value.active_users || 0,
+    meta: `总用户 ${stats.value.total_users || 0}`,
+  },
+])
 
-const loadStats = async () => {
-  try {
-    const res = await client.get('/stats/overview')
-    if (res.data.code === 200) {
-      stats.value = res.data.data || {}
-    }
-  } catch (error) {
-    console.error('Failed to load stats:', error)
+const loadOverview = async () => {
+  const res = await client.get('/stats/overview')
+  if (res.data.code === 200) {
+    stats.value = res.data.data || {}
+    updateStaticCharts()
   }
 }
 
-const initTrendChart = () => {
-  if (!trendChartRef.value) return
-  
-  trendChart = echarts.init(trendChartRef.value)
-  const option = {
-    tooltip: {
-      trigger: 'axis'
-    },
-    legend: {
-      data: ['成功', '失败']
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: []
-    },
-    yAxis: {
-      type: 'value'
-    },
-    series: [
-      {
-        name: '成功',
-        type: 'line',
-        smooth: true,
-        data: [],
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(103, 194, 58, 0.3)' },
-            { offset: 1, color: 'rgba(103, 194, 58, 0.05)' }
-          ])
-        },
-        lineStyle: { color: '#67c23a' },
-        itemStyle: { color: '#67c23a' }
-      },
-      {
-        name: '失败',
-        type: 'line',
-        smooth: true,
-        data: [],
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(245, 108, 108, 0.3)' },
-            { offset: 1, color: 'rgba(245, 108, 108, 0.05)' }
-          ])
-        },
-        lineStyle: { color: '#f56c6c' },
-        itemStyle: { color: '#f56c6c' }
-      }
-    ]
-  }
-  trendChart.setOption(option)
-}
-
-const initPieChart = () => {
-  if (!pieChartRef.value) return
-  
-  pieChart = echarts.init(pieChartRef.value)
-  const option = {
-    tooltip: {
-      trigger: 'item'
-    },
-    legend: {
-      orient: 'vertical',
-      left: 'left'
-    },
-    series: [
-      {
-        name: '请求类型',
-        type: 'pie',
-        radius: '50%',
-        data: [
-          { value: 0, name: 'GET' },
-          { value: 0, name: 'POST' },
-          { value: 0, name: 'PUT' },
-          { value: 0, name: 'DELETE' }
-        ],
-        emphasis: {
-          itemStyle: {
-            shadowBlur: 10,
-            shadowOffsetX: 0,
-            shadowColor: 'rgba(0, 0, 0, 0.5)'
-          }
-        }
-      }
-    ]
-  }
-  pieChart.setOption(option)
-}
-
-const initTokenChart = () => {
-  if (!tokenChartRef.value) return
-  
-  tokenChart = echarts.init(tokenChartRef.value)
-  const option = {
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: {
-        type: 'shadow'
-      }
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      data: []
-    },
-    yAxis: {
-      type: 'value'
-    },
-    series: [
-      {
-        name: '请求数',
-        type: 'bar',
-        data: [],
-        itemStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#83bff6' },
-            { offset: 0.5, color: '#188df0' },
-            { offset: 1, color: '#188df0' }
-          ])
-        }
-      }
-    ]
-  }
-  tokenChart.setOption(option)
-}
-
-const initUserChart = () => {
-  if (!userChartRef.value) return
-  
-  userChart = echarts.init(userChartRef.value)
-  const option = {
-    tooltip: {
-      trigger: 'axis'
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      data: []
-    },
-    yAxis: {
-      type: 'value'
-    },
-    series: [
-      {
-        name: '活跃度',
-        type: 'bar',
-        data: [],
-        itemStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#a0cfff' },
-            { offset: 0.5, color: '#409eff' },
-            { offset: 1, color: '#409eff' }
-          ])
-        }
-      }
-    ]
-  }
-  userChart.setOption(option)
-}
-
-const updateChart = async () => {
-  try {
-    const res = await client.get('/stats/trend', {
-      params: { range: timeRange.value }
+const initCharts = () => {
+  if (trendChartRef.value) {
+    trendChart = echarts.init(trendChartRef.value)
+    trendChart.setOption({
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['总请求', '成功', '失败'] },
+      grid: { left: 24, right: 24, top: 48, bottom: 24, containLabel: true },
+      xAxis: { type: 'category', data: [] },
+      yAxis: { type: 'value' },
+      series: [
+        { name: '总请求', type: 'line', smooth: true, data: [], lineStyle: { color: '#2563eb' } },
+        { name: '成功', type: 'line', smooth: true, data: [], lineStyle: { color: '#16a34a' } },
+        { name: '失败', type: 'line', smooth: true, data: [], lineStyle: { color: '#dc2626' } },
+      ],
     })
-    if (res.data.code === 200) {
-      const data = res.data.data || []
-      const xData = data.map(item => item.time)
-      const successData = data.map(item => item.success || 0)
-      const failedData = data.map(item => item.failed || 0)
-      
-      trendChart?.setOption({
-        xAxis: { data: xData },
-        series: [
-          { data: successData },
-          { data: failedData }
-        ]
-      })
-    }
-  } catch (error) {
-    console.error('Failed to load chart data:', error)
+  }
+
+  if (methodChartRef.value) {
+    methodChart = echarts.init(methodChartRef.value)
+  }
+
+  if (usageChartRef.value) {
+    usageChart = echarts.init(usageChartRef.value)
+  }
+
+  if (failureChartRef.value) {
+    failureChart = echarts.init(failureChartRef.value)
+  }
+}
+
+const loadTrend = async () => {
+  const res = await client.get('/stats/trend', { params: { range: timeRange.value } })
+  if (res.data.code !== 200 || !trendChart) return
+  const data = res.data.data || []
+  trendChart.setOption({
+    xAxis: {
+      data: data.map((item) =>
+        timeRange.value === '24h'
+          ? dayjs(item.time).format('HH:mm')
+          : dayjs(item.time).format('MM-DD')
+      ),
+    },
+    series: [
+      { data: data.map((item) => item.total_count || 0) },
+      { data: data.map((item) => item.success_count || 0) },
+      { data: data.map((item) => item.failed_count || 0) },
+    ],
+  })
+}
+
+const updateStaticCharts = () => {
+  if (methodChart) {
+    methodChart.setOption({
+      tooltip: { trigger: 'item' },
+      series: [
+        {
+          type: 'pie',
+          radius: ['35%', '65%'],
+          data: (stats.value.method_distribution || []).map((item) => ({
+            name: item.method,
+            value: item.count,
+          })),
+        },
+      ],
+    })
+  }
+
+  if (usageChart) {
+    const usage = stats.value.token_usage || []
+    usageChart.setOption({
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: 24, right: 24, top: 16, bottom: 48, containLabel: true },
+      xAxis: {
+        type: 'category',
+        data: usage.map((item) => item.token_name),
+        axisLabel: { rotate: 20 },
+      },
+      yAxis: { type: 'value' },
+      series: [{ type: 'bar', data: usage.map((item) => item.requests), itemStyle: { color: '#2563eb' } }],
+    })
+  }
+
+  if (failureChart) {
+    const failures = stats.value.token_failures || []
+    failureChart.setOption({
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: 24, right: 24, top: 16, bottom: 48, containLabel: true },
+      xAxis: {
+        type: 'category',
+        data: failures.map((item) => item.token_name),
+        axisLabel: { rotate: 20 },
+      },
+      yAxis: { type: 'value' },
+      series: [{ type: 'bar', data: failures.map((item) => item.failures), itemStyle: { color: '#dc2626' } }],
+    })
   }
 }
 
 const handleResize = () => {
   trendChart?.resize()
-  pieChart?.resize()
-  tokenChart?.resize()
-  userChart?.resize()
+  methodChart?.resize()
+  usageChart?.resize()
+  failureChart?.resize()
 }
 
 onMounted(async () => {
-  await loadStats()
-  initTrendChart()
-  initPieChart()
-  initTokenChart()
-  initUserChart()
-  await updateChart()
+  initCharts()
+  await loadOverview()
+  await loadTrend()
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   trendChart?.dispose()
-  pieChart?.dispose()
-  tokenChart?.dispose()
-  userChart?.dispose()
+  methodChart?.dispose()
+  usageChart?.dispose()
+  failureChart?.dispose()
   window.removeEventListener('resize', handleResize)
 })
 </script>
 
 <style scoped>
 .stats-page {
-  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.stats-row {
-  margin-bottom: 20px;
+.summary-card {
+  border: 1px solid #dbe4f0;
+  background: linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
 }
 
-.stat-card {
-  cursor: pointer;
-  transition: transform 0.3s, box-shadow 0.3s;
+.summary-label {
+  color: #5b7087;
+  font-size: 13px;
 }
 
-.stat-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.summary-value {
+  margin-top: 10px;
+  color: #132238;
+  font-size: 26px;
+  font-weight: 700;
 }
 
-.stat-content {
+.summary-meta {
+  margin-top: 8px;
+  color: #789;
+  font-size: 12px;
+}
+
+.panel-header {
   display: flex;
   align-items: center;
-  padding: 10px 0;
+  justify-content: space-between;
 }
 
-.stat-icon {
-  width: 60px;
-  height: 60px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 16px;
-  color: white;
-  font-size: 28px;
+.chart-box {
+  height: 340px;
 }
 
-.stat-info {
-  flex: 1;
+.chart-box.small {
+  height: 300px;
 }
 
-.stat-label {
-  font-size: 14px;
-  color: #999;
-  margin-bottom: 8px;
+.category-list {
+  margin-top: 16px;
+  border-top: 1px solid #eef3f8;
+  padding-top: 16px;
 }
 
-.stat-value {
-  font-size: 28px;
-  font-weight: 600;
-  color: #333;
+.category-title {
+  font-size: 13px;
+  color: #5b7087;
+  margin-bottom: 10px;
 }
 
-.content-row {
-  margin-bottom: 20px;
-}
-
-.card-header {
+.category-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f2f5f9;
 }
 
-.chart-card {
-  min-height: 400px;
-}
-
-.chart-container {
-  width: 100%;
-  height: 320px;
+.category-item:last-child {
+  border-bottom: none;
 }
 </style>

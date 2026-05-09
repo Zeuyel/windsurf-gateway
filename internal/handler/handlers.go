@@ -19,6 +19,7 @@ type Handlers struct {
 	Plugin         *PluginHandler
 	SystemConfig   *SystemConfigHandler
 	System         *SystemHandler
+	SmartLogin     *SmartLoginHandler
 }
 
 func NewHandlers(services *service.Services, cfg *config.Config) *Handlers {
@@ -27,7 +28,7 @@ func NewHandlers(services *service.Services, cfg *config.Config) *Handlers {
 	return &Handlers{
 		Auth:           NewAuthHandler(services.Auth),
 		UserAuth:       NewUserAuthHandler(services.UserAuth),
-		Token:          NewTokenHandler(services.Token),
+		Token:          NewTokenHandler(services.Token, services.SmartImport),
 		Stats:          NewStatsHandler(services.Stats),
 		Proxy:          NewProxyHandler(proxyService, services),
 		InvitationCode: NewInvitationCodeHandler(services.InvitationCode),
@@ -35,6 +36,7 @@ func NewHandlers(services *service.Services, cfg *config.Config) *Handlers {
 		Plugin:         NewPluginHandler(services.Plugin),
 		SystemConfig:   NewSystemConfigHandler(services.SystemConfig),
 		System:         NewSystemHandler(),
+		SmartLogin:     NewSmartLoginHandler(services.SmartLogin, services.FirebaseAuth, services.DevinAuth),
 	}
 }
 

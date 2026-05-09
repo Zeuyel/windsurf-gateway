@@ -1,23 +1,27 @@
 package handler
 
 import (
+	"time"
+
 	"windsurf-gateway/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 type TokenHandler struct {
-	svc *service.TokenService
+	svc         *service.TokenService
+	smartImport *service.SmartTokenImportService
 }
 
-func NewTokenHandler(svc *service.TokenService) *TokenHandler {
-	return &TokenHandler{svc: svc}
+func NewTokenHandler(svc *service.TokenService, smartImport *service.SmartTokenImportService) *TokenHandler {
+	return &TokenHandler{svc: svc, smartImport: smartImport}
 }
 
 func (h *TokenHandler) List(c *gin.Context) {
 	page, pageSize := getPageParams(c)
 	status := c.Query("status")
-	tokens, total, err := h.svc.List(page, pageSize, status)
+	poolStatus := c.Query("pool_status")
+	tokens, total, err := h.svc.List(page, pageSize, status, poolStatus)
 	if err != nil {
 		Error(c, 500, err.Error())
 		return
@@ -33,12 +37,27 @@ func (h *TokenHandler) Create(c *gin.Context) {
 		TenantAddress string `json:"tenant_address" binding:"required"`
 		ProxyURL      string `json:"proxy_url"`
 		MaxRequests   int    `json:"max_requests"`
+		Weight        int    `json:"weight"`
 		IsShared      bool   `json:"is_shared"`
 		Email         string `json:"email"`
+		ExpiresAt     string `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Error(c, 400, "invalid request: "+err.Error())
 		return
+	}
+
+	var expiresAt *time.Time
+	if req.ExpiresAt != "" {
+		parsed, err := time.ParseInLocation("2006-01-02 15:04:05", req.ExpiresAt, time.Local)
+		if err != nil {
+			parsed, err = time.Parse(time.RFC3339, req.ExpiresAt)
+			if err != nil {
+				Error(c, 400, "invalid expires_at format")
+				return
+			}
+		}
+		expiresAt = &parsed
 	}
 
 	token := &service.TokenCreateRequest{
@@ -48,8 +67,10 @@ func (h *TokenHandler) Create(c *gin.Context) {
 		TenantAddress: req.TenantAddress,
 		ProxyURL:      req.ProxyURL,
 		MaxRequests:   req.MaxRequests,
+		Weight:        req.Weight,
 		IsShared:      req.IsShared,
 		Email:         req.Email,
+		ExpiresAt:     expiresAt,
 	}
 
 	created, err := h.svc.CreateToken(token)
@@ -128,6 +149,34 @@ func (h *TokenHandler) BatchImport(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"success": success, "failed": failed})
+}
+
+func (h *TokenHandler) SmartLoginImport(c *gin.Context) {
+	if h.smartImport == nil {
+		Error(c, 500, "smart login import service unavailable")
+		return
+	}
+
+	var req service.SmartTokenImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, 400, "invalid request: "+err.Error())
+		return
+	}
+
+	result, err := h.smartImport.Import(&req)
+	if err != nil {
+		switch typed := err.(type) {
+		case *service.SmartTokenImportSelectionError:
+			ErrorWithData(c, 409, typed.Error(), typed.Result)
+		case *service.SmartTokenImportUnsupportedError:
+			ErrorWithData(c, 400, typed.Error(), typed.Result)
+		default:
+			Error(c, 500, err.Error())
+		}
+		return
+	}
+
+	Success(c, result)
 }
 
 func (h *TokenHandler) GetTokenUsers(c *gin.Context) {

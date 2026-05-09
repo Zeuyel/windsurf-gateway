@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"windsurf-gateway/internal/database"
@@ -12,6 +14,7 @@ import (
 	"windsurf-gateway/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type ProxyHandler struct {
@@ -24,18 +27,11 @@ func NewProxyHandler(proxySvc *proxy.ProxyService, services *service.Services) *
 }
 
 func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
-	startTime := time.Now()
+	requestID := uuid.NewString()
+	c.Writer.Header().Set("X-Request-ID", requestID)
 
-	authHeader := c.GetHeader("Authorization")
-	var userToken string
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		userToken = authHeader[7:]
-	} else {
-		userToken = authHeader
-	}
-
+	userToken := extractBearerToken(c.GetHeader("Authorization"))
 	var user *database.User
-	var token *database.Token
 	var err error
 	if userToken != "" {
 		user, err = h.services.UserAuth.GetUserByToken(userToken)
@@ -48,111 +44,254 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 			return
 		}
 		rateLimitKey := "ratelimit:user:" + strconv.FormatUint(uint64(user.ID), 10)
-		allowed, remaining, err := h.services.Cache.GetRateLimit(rateLimitKey, user.RateLimitPerMinute, time.Minute)
-		if err != nil || !allowed {
+		allowed, remaining, rateErr := h.services.Cache.GetRateLimit(rateLimitKey, user.RateLimitPerMinute, time.Minute)
+		if rateErr != nil || !allowed {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "remaining": remaining})
 			return
 		}
-		token, err = h.services.LoadBalancer.SelectToken(user.ID)
-	} else {
-		token, err = h.services.LoadBalancer.SelectAnyToken()
 	}
+
+	backendToken, err := h.services.LoadBalancer.SelectToken(c.Request.Context())
 	if err != nil {
 		logger.Errorf("Failed to select backend token: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no available backend tokens"})
 		return
 	}
 
-	body, _ := io.ReadAll(c.Request.Body)
-	requestPath := c.Param("path")
-	if requestPath == "" {
-		requestPath = c.Request.URL.RequestURI()
-	}
-
-	proxyReq := &proxy.ProxyRequest{
-		Token:         token,
-		Method:        c.Request.Method,
-		Path:          requestPath,
-		Headers:       c.Request.Header,
-		Body:          body,
-		ClientIP:      proxy.GetClientIP(c.Request),
-		UserAgent:     c.Request.UserAgent(),
-		TenantAddress: token.TenantAddress,
-	}
-
-	captured, err := h.proxy.ForwardStream(c.Request.Context(), proxyReq, c.Writer)
-	latency := time.Since(startTime)
-
-	if user != nil {
-		user.IncrementUsage()
-		h.services.UserAuth.UpdateUser(user.ID, map[string]interface{}{
-			"used_requests": user.UsedRequests,
-		})
-	}
-	h.services.Token.IncrementUsage(token.ID)
-
-	statusCode := http.StatusOK
-	if err != nil {
-		statusCode = http.StatusBadGateway
-	}
-
-	record := &database.RequestLog{
-		TokenID:       token.ID,
-		Method:        c.Request.Method,
-		Path:          requestPath,
-		UserAgent:     c.Request.UserAgent(),
-		ClientIP:      proxy.GetClientIP(c.Request),
-		TenantAddress: token.TenantAddress,
-		StatusCode:    statusCode,
-		RequestSize:   int64(len(body)),
-		ResponseSize:  int64(len(captured)),
-		Latency:       latency.Microseconds(),
-	}
-	if user != nil {
-		record.UserID = &user.ID
-	}
-	h.services.RequestRecord.Create(record)
-
-	if err != nil {
-		logger.Errorf("Proxy error: %v", err)
-	}
+	h.forwardRequest(c, requestID, user, backendToken)
 }
 
 func (h *ProxyHandler) ForwardWithSystemToken(c *gin.Context) {
+	requestID := uuid.NewString()
+	c.Writer.Header().Set("X-Request-ID", requestID)
+
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authorization required"})
 		return
 	}
 
-	var tokenStr string
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		tokenStr = authHeader[7:]
-	} else {
-		tokenStr = authHeader
+	tokenStr := extractBearerToken(authHeader)
+	if tokenStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authorization required"})
+		return
 	}
 
-	token, err := h.services.Token.ValidateToken(tokenStr)
+	validatedToken, err := h.services.Token.ValidateToken(tokenStr)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid system token"})
 		return
 	}
 
-	body, _ := io.ReadAll(c.Request.Body)
+	backendToken, err := h.services.LoadBalancer.AcquireSpecificToken(c.Request.Context(), validatedToken.ID)
+	if err != nil {
+		logger.Errorf("Failed to acquire specific backend token %s: %v", validatedToken.ID, err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "backend token unavailable"})
+		return
+	}
 
+	h.forwardRequest(c, requestID, nil, backendToken)
+}
+
+func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *database.User, backendToken *database.Token) {
+	body, readErr := io.ReadAll(c.Request.Body)
+	if readErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+		return
+	}
+
+	requestPath := buildRequestPath(c)
 	proxyReq := &proxy.ProxyRequest{
-		Token:         token,
+		Token:         backendToken,
 		Method:        c.Request.Method,
-		Path:          c.Param("path"),
+		Path:          requestPath,
 		Headers:       c.Request.Header,
 		Body:          body,
 		ClientIP:      proxy.GetClientIP(c.Request),
 		UserAgent:     c.Request.UserAgent(),
-		TenantAddress: token.TenantAddress,
+		TenantAddress: backendToken.TenantAddress,
 	}
 
-	_, err = h.proxy.ForwardStream(c.Request.Context(), proxyReq, c.Writer)
-	if err != nil {
-		logger.Errorf("System proxy error: %v", err)
+	proxyResp, proxyErr := h.proxy.ForwardStream(c.Request.Context(), proxyReq, c.Writer)
+	outcome := classifyProxyOutcome(proxyResp, proxyErr)
+	if err := h.services.LoadBalancer.CompleteRequest(backendToken.ID, outcome); err != nil {
+		logger.Warnf("Failed to update backend token %s state: %v", backendToken.ID, err)
 	}
+
+	if user != nil {
+		user.IncrementUsage()
+		if err := h.services.UserAuth.UpdateUser(user.ID, map[string]interface{}{"used_requests": user.UsedRequests}); err != nil {
+			logger.Warnf("Failed to update user %d usage: %v", user.ID, err)
+		}
+	}
+
+	logRecord := buildRequestLog(requestID, user, backendToken, proxyReq, proxyResp, outcome)
+	if err := h.services.RequestRecord.Create(logRecord); err != nil {
+		logger.Warnf("Failed to persist request log %s: %v", requestID, err)
+	}
+
+	if proxyErr != nil {
+		logger.Errorf("Proxy error for request %s: %v", requestID, proxyErr)
+		if !c.Writer.Written() {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "proxy request failed", "request_id": requestID})
+		}
+	}
+}
+
+func buildRequestPath(c *gin.Context) string {
+	path := c.Param("path")
+	if path == "" {
+		path = c.Request.URL.Path
+	}
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if rawQuery := c.Request.URL.RawQuery; rawQuery != "" {
+		path += "?" + rawQuery
+	}
+	return path
+}
+
+func extractBearerToken(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(value), "bearer ") {
+		return strings.TrimSpace(value[7:])
+	}
+	return value
+}
+
+func classifyProxyOutcome(resp *proxy.ProxyResponse, err error) service.TokenRequestOutcome {
+	outcome := service.TokenRequestOutcome{}
+	if resp != nil {
+		outcome.StatusCode = resp.StatusCode
+	}
+
+	if err != nil {
+		message := err.Error()
+		lower := strings.ToLower(message)
+		outcome.ErrorMessage = message
+
+		switch {
+		case strings.Contains(lower, "broken pipe"), strings.Contains(lower, "reset by peer"), strings.Contains(lower, "write response"), strings.Contains(lower, "context canceled"):
+			outcome.FailureCategory = "client_disconnected"
+			outcome.Success = false
+			outcome.Penalize = false
+		case strings.Contains(lower, "timeout"):
+			outcome.FailureCategory = "transport_timeout"
+			outcome.Penalize = true
+			outcome.Cooldown = 2 * time.Minute
+		default:
+			outcome.FailureCategory = "transport_error"
+			outcome.Penalize = true
+			outcome.Cooldown = 5 * time.Minute
+		}
+		if outcome.StatusCode == 0 {
+			outcome.StatusCode = http.StatusBadGateway
+		}
+		return outcome
+	}
+
+	if resp == nil {
+		outcome.StatusCode = http.StatusBadGateway
+		outcome.FailureCategory = "empty_response"
+		outcome.Penalize = true
+		outcome.Cooldown = 2 * time.Minute
+		outcome.ErrorMessage = "empty proxy response"
+		return outcome
+	}
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		outcome.FailureCategory = "upstream_401"
+		outcome.ErrorMessage = coalesceProxyError(resp.ErrorMessage, "upstream returned 401")
+		outcome.Penalize = true
+		outcome.Cooldown = 30 * time.Minute
+	case resp.StatusCode == http.StatusForbidden:
+		outcome.FailureCategory = "upstream_403"
+		outcome.ErrorMessage = coalesceProxyError(resp.ErrorMessage, "upstream returned 403")
+		outcome.Penalize = true
+		outcome.Cooldown = 30 * time.Minute
+	case resp.StatusCode == http.StatusTooManyRequests:
+		outcome.FailureCategory = "upstream_429"
+		outcome.ErrorMessage = coalesceProxyError(resp.ErrorMessage, "upstream returned 429")
+		outcome.Penalize = true
+		outcome.Cooldown = 10 * time.Minute
+	case resp.StatusCode >= 500:
+		outcome.FailureCategory = fmt.Sprintf("upstream_%d", resp.StatusCode)
+		outcome.ErrorMessage = coalesceProxyError(resp.ErrorMessage, fmt.Sprintf("upstream returned %d", resp.StatusCode))
+		outcome.Penalize = true
+		outcome.Cooldown = 2 * time.Minute
+	case resp.StatusCode >= 400:
+		outcome.FailureCategory = fmt.Sprintf("client_%d", resp.StatusCode)
+		outcome.ErrorMessage = truncateErrorMessage(resp.BodySnippet)
+		outcome.Success = false
+		outcome.Penalize = false
+	default:
+		outcome.Success = true
+	}
+	return outcome
+}
+
+func buildRequestLog(requestID string, user *database.User, backendToken *database.Token, req *proxy.ProxyRequest, resp *proxy.ProxyResponse, outcome service.TokenRequestOutcome) *database.RequestLog {
+	statusCode := http.StatusBadGateway
+	upstreamStatusCode := 0
+	if resp != nil && resp.StatusCode > 0 {
+		statusCode = resp.StatusCode
+		upstreamStatusCode = resp.StatusCode
+	} else if outcome.StatusCode > 0 {
+		statusCode = outcome.StatusCode
+	}
+
+	logRecord := &database.RequestLog{
+		TokenID:            backendToken.ID,
+		TokenName:          backendToken.Name,
+		RequestID:          requestID,
+		Method:             req.Method,
+		Path:               req.Path,
+		UserAgent:          req.UserAgent,
+		ClientIP:           req.ClientIP,
+		TenantAddress:      req.TenantAddress,
+		StatusCode:         statusCode,
+		UpstreamStatusCode: upstreamStatusCode,
+		RequestSize:        int64(len(req.Body)),
+		FailureCategory:    outcome.FailureCategory,
+		ErrorMessage:       truncateErrorMessage(coalesceProxyError(outcome.ErrorMessage, respError(resp))),
+	}
+	if resp != nil {
+		logRecord.ResponseSize = resp.Size
+		logRecord.Latency = resp.Latency.Microseconds()
+	}
+	if user != nil {
+		logRecord.UserID = &user.ID
+		logRecord.Username = user.Username
+	}
+	return logRecord
+}
+
+func coalesceProxyError(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
+func respError(resp *proxy.ProxyResponse) string {
+	if resp == nil {
+		return ""
+	}
+	if resp.ErrorMessage != "" {
+		return resp.ErrorMessage
+	}
+	return resp.BodySnippet
+}
+
+func truncateErrorMessage(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 1000 {
+		return value
+	}
+	return value[:1000]
 }
