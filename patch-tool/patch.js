@@ -202,6 +202,28 @@ function restore() {
     console.log(`restored ${file}`)
   }
   console.log(`restored from ${dir}`)
+  
+  // Clean up mocked data from globalState
+  let Database
+  try {
+    Database = require('better-sqlite3')
+  } catch (e) {
+    console.log('better-sqlite3 not installed; skip cleanup')
+    return
+  }
+  
+  if (fs.existsSync(globalStatePath)) {
+    const db = new Database(globalStatePath)
+    const mockKeys = ['windsurfAuthStatus', 'windsurfOnboarding', 'windsurfProductEducation']
+    for (const key of mockKeys) {
+      const row = db.prepare('SELECT key FROM ItemTable WHERE key = ?').get(key)
+      if (row) {
+        db.prepare('DELETE FROM ItemTable WHERE key = ?').run(key)
+        console.log(`cleaned up ${key}`)
+      }
+    }
+    db.close()
+  }
 }
 
 function usage() {
