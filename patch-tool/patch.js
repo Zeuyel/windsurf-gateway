@@ -116,11 +116,50 @@ function patchGlobalState(gateway) {
   }
   backup(globalStatePath)
   const db = new Database(globalStatePath)
+  
+  // Patch API server URLs
   const rows = db.prepare('SELECT key,value FROM ItemTable WHERE key LIKE ? OR key LIKE ?').all('%apiServerUrl%', '%BASE_API_SERVER_URL%')
   for (const row of rows) {
     db.prepare('UPDATE ItemTable SET value = ? WHERE key = ?').run(JSON.stringify(gateway), row.key)
     console.log(`globalState ${row.key} -> ${gateway}`)
   }
+  
+  // Mock windsurfAuthStatus to skip signup
+  const existingAuthStatus = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get('windsurfAuthStatus')
+  if (!existingAuthStatus) {
+    const mockAuthStatus = {
+      apiKey: 'devin-session-token$mocked-for-gateway',
+      allowedCommandModelConfigsProtoBinaryBase64: []
+    }
+    db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)').run('windsurfAuthStatus', JSON.stringify(mockAuthStatus))
+    console.log('globalState windsurfAuthStatus -> mocked')
+  }
+  
+  // Mock onboarding completion
+  const existingOnboarding = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get('windsurfOnboarding')
+  if (!existingOnboarding) {
+    db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)').run('windsurfOnboarding', JSON.stringify(true))
+    console.log('globalState windsurfOnboarding -> true')
+  }
+  
+  // Mock product education completed
+  const existingProductEducation = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get('windsurfProductEducation')
+  if (!existingProductEducation) {
+    const mockProductEducation = {
+      onboardingState: 2,
+      onboardingItems: [
+        {
+          id: 'windsurf.prioritized.chat.open',
+          title: 'Code with Cascade',
+          completed: true,
+          command: 'windsurf.prioritized.chat.open'
+        }
+      ]
+    }
+    db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)').run('windsurfProductEducation', JSON.stringify(mockProductEducation))
+    console.log('globalState windsurfProductEducation -> mocked')
+  }
+  
   db.close()
   return rows.length > 0
 }
