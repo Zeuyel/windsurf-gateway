@@ -1,0 +1,13 @@
+{
+  "name": "windsurf-open-patch",
+  "version": "1.0.0",
+  "description": "Windsurf patch tool - redirect API to custom gateway",
+  "main": "patch.js",
+  "scripts": {
+    "patch": "node patch.js",
+    "restore": "node patch.js --restore"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  }
+}

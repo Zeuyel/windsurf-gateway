@@ -1,0 +1,8 @@
+.env
+*.log
+windsurf-gateway
+/tmp/
+web/node_modules/
+web/dist/
+patch-tool/node_modules/
+.DS_Store
