@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"windsurf-gateway/internal/config"
 	"windsurf-gateway/internal/database"
@@ -180,7 +181,7 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 					Size:         totalBytes,
 					Latency:      latency,
 					ErrorMessage: writeErr.Error(),
-					BodySnippet:  snippet.String(),
+					BodySnippet:  buildBodySnippet(resp.Header, snippet.Bytes()),
 				}, fmt.Errorf("write response: %w", writeErr)
 			}
 			if flusher != nil {
@@ -195,7 +196,7 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 					Headers:     resp.Header,
 					Size:        totalBytes,
 					Latency:     time.Since(startTime),
-					BodySnippet: snippet.String(),
+					BodySnippet: buildBodySnippet(resp.Header, snippet.Bytes()),
 				}, nil
 			}
 			latency := time.Since(startTime)
@@ -205,10 +206,59 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 				Size:         totalBytes,
 				Latency:      latency,
 				ErrorMessage: readErr.Error(),
-				BodySnippet:  snippet.String(),
+				BodySnippet:  buildBodySnippet(resp.Header, snippet.Bytes()),
 			}, fmt.Errorf("read upstream response: %w", readErr)
 		}
 	}
+}
+
+func buildBodySnippet(headers http.Header, body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+
+	contentEncoding := strings.ToLower(headers.Get("Content-Encoding"))
+	if strings.Contains(contentEncoding, "gzip") {
+		return fmt.Sprintf("<gzip %d bytes>", len(body))
+	}
+
+	contentType := strings.ToLower(headers.Get("Content-Type"))
+	switch {
+	case strings.Contains(contentType, "application/proto"),
+		strings.Contains(contentType, "application/protobuf"),
+		strings.Contains(contentType, "application/connect+proto"),
+		strings.Contains(contentType, "application/octet-stream"):
+		return fmt.Sprintf("<binary %d bytes>", len(body))
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return ""
+	}
+
+	if utf8.Valid(trimmed) && isTextLikePayload(trimmed) {
+		return string(trimmed)
+	}
+
+	return fmt.Sprintf("<binary %d bytes>", len(body))
+}
+
+func isTextLikePayload(body []byte) bool {
+	sample := body
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+
+	for _, b := range sample {
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b < 0x20 || b == 0x7f {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (p *ProxyService) buildTargetURL(tenantAddress, path string) (string, error) {
