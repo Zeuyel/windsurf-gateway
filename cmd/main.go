@@ -158,6 +158,7 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 				tokens.GET("/stats", handlers.Token.Stats)
 				tokens.POST("/batch-import", handlers.Token.BatchImport)
 				tokens.POST("/batch-refresh-auth-session", handlers.Token.BatchRefreshAuthSession)
+				tokens.POST("/:id/unlock", handlers.Token.UnlockCooldown)
 				tokens.GET("/:id", handlers.Token.Get)
 				tokens.PUT("/:id", handlers.Token.Update)
 				tokens.DELETE("/:id", handlers.Token.Delete)

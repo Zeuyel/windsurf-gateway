@@ -77,11 +77,19 @@
         <el-table-column prop="last_used_at" label="最近使用" min-width="170">
           <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="220">
+        <el-table-column label="操作" fixed="right" width="300">
           <template #default="{ row }">
             <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
             <el-button size="small" type="warning" @click="toggleStatus(row)">
               {{ row.status === 'active' ? '禁用' : '启用' }}
+            </el-button>
+            <el-button
+              v-if="row.pool_status === 'cooldown'"
+              size="small"
+              type="success"
+              @click="unlockCooldown(row)"
+            >
+              解除冷却
             </el-button>
             <el-button size="small" type="danger" @click="deleteToken(row)">删除</el-button>
           </template>
@@ -506,6 +514,23 @@ const deleteToken = async (row) => {
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('删除失败')
+    }
+  }
+}
+
+const unlockCooldown = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确定解除 ${row.name} 的冷却状态吗？`, '确认操作', { type: 'warning' })
+    const res = await client.post(`/tokens/${row.id}/unlock`)
+    if (res.data.code === 200) {
+      ElMessage.success('冷却状态已解除')
+      await loadAll()
+    } else {
+      ElMessage.error(res.data.msg || '解除冷却失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('解除冷却失败')
     }
   }
 }

@@ -111,6 +111,14 @@ func (h *TokenHandler) Delete(c *gin.Context) {
 	Success(c, nil)
 }
 
+func (h *TokenHandler) UnlockCooldown(c *gin.Context) {
+	if err := h.svc.UnlockCooldown(c.Param("id")); err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
+	Success(c, nil)
+}
+
 func (h *TokenHandler) Validate(c *gin.Context) {
 	tokenStr := c.Query("token")
 	if tokenStr == "" {

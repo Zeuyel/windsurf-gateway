@@ -101,6 +101,19 @@ func (s *TokenService) Delete(id string) error {
 	return s.db.Where("id = ?", id).Delete(&database.Token{}).Error
 }
 
+func (s *TokenService) UnlockCooldown(id string) error {
+	updates := map[string]interface{}{
+		"cooldown_until":       nil,
+		"consecutive_failures": 0,
+		"last_error":           "",
+		"last_error_at":        nil,
+	}
+	if err := s.db.Model(&database.Token{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		return err
+	}
+	return s.RefreshTokenStateByID(id)
+}
+
 func (s *TokenService) GetActiveTokens() ([]database.Token, error) {
 	if err := s.RefreshTokenStates(); err != nil {
 		return nil, err
