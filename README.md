@@ -5,10 +5,10 @@ Windsurf Gateway 是一个参照 `augment-open-gateway` 思路实现的远程账
 ## 核心架构
 
 - **Windsurf 客户端 Patch**：通过修改 Windsurf 配置项 `codeium.apiServerUrl`，把默认的 `https://server.codeium.com` 改为你的 gateway 地址。
-- **Gateway 接口层**：提供 `/proxy/*path` 作为 Windsurf 客户端请求入口。
+- **Gateway 接口层**：Windsurf 原生 API path 会直接进入 gateway；`/proxy/*path` 也保留为显式代理入口。
 - **账号池管理**：管理员在后台录入多个 Windsurf/Codeium token 和租户地址。
-- **负载分发**：用户请求进入 gateway 后，按用户固定分配或池化选择可用账号。
-- **用户系统**：支持用户登录、API token、额度和频率控制。
+- **负载分发**：客户端不需要再登录真实 Windsurf 账号；gateway 从后台账号池选择真实 token 代发请求。
+- **用户系统**：用于 gateway 管理后台、额度控制和可选客户端标识；Windsurf patch 后不依赖原 Windsurf 注册登录。
 
 ## Windsurf Patch 关键发现
 
@@ -86,13 +86,13 @@ Patch 工具会尝试处理三类位置：
 
 ## 网关请求入口
 
-Windsurf 客户端请求应进入：
+Windsurf patch 后，客户端的 `codeium.apiServerUrl` 指向 gateway 根地址。Windsurf 原生请求 path 会由 gateway 的 `NoRoute` 兜底接住并转发；同时保留显式入口：
 
 ```text
 /proxy/*path
 ```
 
-用户的 API token 通过 `Authorization: Bearer ws-xxx` 传入。Gateway 验证用户 token 后，从系统 Windsurf token 池选择真实 token，并把请求转发到真实 `server.codeium.com`。
+如果请求带 `Authorization: Bearer ws-xxx`，gateway 会按对应 gateway 用户做额度和频率控制；如果没有用户 token，gateway 会直接从系统 Windsurf token 池选择可用真实账号代发请求。也就是说，patch 后客户端不需要再走 Windsurf 的真实注册/登录流程，账号信息来自 gateway 后台维护的 token 池。
 
 ## 管理接口
 

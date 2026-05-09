@@ -48,6 +48,12 @@ func (s *LoadBalancerService) SelectToken(userID uint) (*database.Token, error) 
 	return token, nil
 }
 
+func (s *LoadBalancerService) SelectAnyToken() (*database.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.selectRoundRobin()
+}
+
 func (s *LoadBalancerService) isTokenValid(token *database.Token) bool {
 	if token.Status != "active" {
 		return false

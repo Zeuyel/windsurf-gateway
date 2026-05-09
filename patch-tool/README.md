@@ -1,6 +1,6 @@
 # Windsurf Gateway Patch Tool
 
-This tool redirects Windsurf API traffic to a custom Windsurf Gateway.
+This tool redirects Windsurf API traffic to a custom Windsurf Gateway. After patching, the Windsurf client should not need to log in to a real Windsurf account; backend account tokens are selected by the gateway token pool.
 
 ## What it patches
 
@@ -16,12 +16,6 @@ The default API endpoint found in the bundled extension is:
 
 ```text
 https://server.codeium.com
-```
-
-The default register endpoint is:
-
-```text
-https://register.windsurf.com
 ```
 
 The tool supports three patch targets:
@@ -48,12 +42,6 @@ Full patch:
 
 ```bash
 node patch.js --gateway=https://your-gateway.example.com --mode=all
-```
-
-With register gateway override:
-
-```bash
-node patch.js --gateway=https://your-gateway.example.com --register-gateway=https://your-gateway.example.com --mode=all
 ```
 
 Environment variables:
@@ -95,3 +83,4 @@ Default Linux install path:
 - `--mode=config` does not require root if your user owns the Windsurf config directory.
 - `--mode=extension` or `--mode=all` may require elevated permissions because `/opt/windsurf` is usually root-owned.
 - Restart Windsurf after patching.
+- Point `codeium.apiServerUrl` to the gateway root URL, not to `/proxy`; the gateway catches native Windsurf API paths and forwards them with backend pool tokens.

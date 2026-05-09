@@ -202,8 +202,27 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 			c.JSON(404, gin.H{"error": "API endpoint not found"})
 			return
 		}
+		if c.Request.Method != http.MethodGet || isWindsurfAPIRequest(c.Request) {
+			handlers.Proxy.ForwardWithUserToken(c)
+			return
+		}
 		c.File(cfg.Frontend.StaticPath + "/index.html")
 	})
 
 	return router
+}
+
+func isWindsurfAPIRequest(r *http.Request) bool {
+	accept := r.Header.Get("Accept")
+	contentType := r.Header.Get("Content-Type")
+	userAgent := strings.ToLower(r.UserAgent())
+	path := strings.ToLower(r.URL.Path)
+	return strings.Contains(userAgent, "windsurf") ||
+		strings.Contains(userAgent, "codeium") ||
+		strings.Contains(contentType, "application/grpc") ||
+		strings.Contains(contentType, "application/protobuf") ||
+		strings.Contains(accept, "application/grpc") ||
+		strings.Contains(path, "codeium") ||
+		strings.Contains(path, "exafunction") ||
+		strings.Contains(path, "language_server")
 }
