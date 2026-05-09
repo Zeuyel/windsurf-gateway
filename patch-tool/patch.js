@@ -11,6 +11,8 @@ const DEFAULT_REGISTER_URL = 'https://register.windsurf.com'
 const GATEWAY_PLACEHOLDER_API_KEY = 'sk-ws-01-gateway-placeholder'
 const AUTH_SESSION_FALLBACK_SENTINEL = `id:"windsurf-gateway",accessToken:"${GATEWAY_PLACEHOLDER_API_KEY}"`
 const AUTH_SESSION_FALLBACK_REGEX = /await i\.authentication\.getSession\(n\.WindsurfExtensionMetadata\.getInstance\(\)\.authProviderId,\[[\s\S]*?\],e\)/
+const USER_STATUS_FALLBACK_SENTINEL = `allowedCommandModelConfigsProtoBinaryBase64:[],userStatusProtoBinaryBase64:""}`
+const USER_STATUS_FALLBACK_REGEX = /([A-Za-z_$][\w$]*)\.StatusBar\.getInstance\(\)\.setAuthStatus\(!1\),([A-Za-z_$][\w$]*)\.windsurfAuth\.setAuthStatus\(null\),\(await\(0,([A-Za-z_$][\w$]*)\.getAuthSession\)\(\)\)\?\.accessToken===([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)\.clearAuthentication\(\),!1/
 
 function argValue(name) {
   const args = process.argv.slice(2)
@@ -101,8 +103,16 @@ function patchExtension(gateway, registerGateway) {
       return `${match}??{id:"windsurf-gateway",accessToken:"${GATEWAY_PLACEHOLDER_API_KEY}",account:{label:"Gateway",id:"windsurf-gateway"},scopes:[]}`
     })
   }
+  if (!content.includes(USER_STATUS_FALLBACK_SENTINEL)) {
+    content = content.replace(USER_STATUS_FALLBACK_REGEX, (_match, statusBarRef, authRef, _sessionRef, apiKeyRef) => {
+      return `${statusBarRef}.StatusBar.getInstance().setAuthStatus(!0),${authRef}.windsurfAuth.setAuthStatus({apiKey:${apiKeyRef},allowedCommandModelConfigsProtoBinaryBase64:[],userStatusProtoBinaryBase64:""}),!0`
+    })
+  }
   if (content.includes(AUTH_SESSION_FALLBACK_SENTINEL) && !before.includes(AUTH_SESSION_FALLBACK_SENTINEL)) {
     console.log('extension auth bootstrap patched with gateway fallback session')
+  }
+  if (content.includes(USER_STATUS_FALLBACK_SENTINEL) && !before.includes(USER_STATUS_FALLBACK_SENTINEL)) {
+    console.log('extension user-status fallback patched for gateway mode')
   }
   if (content === before) {
     console.log('extension already patched or patch markers not found')
@@ -138,7 +148,8 @@ function patchGlobalState(gateway) {
   // Mock windsurfAuthStatus to skip signup
   const mockAuthStatus = {
     apiKey: GATEWAY_PLACEHOLDER_API_KEY,
-    allowedCommandModelConfigsProtoBinaryBase64: []
+    allowedCommandModelConfigsProtoBinaryBase64: [],
+    userStatusProtoBinaryBase64: ''
   }
   db.prepare(`
     INSERT INTO ItemTable (key, value) VALUES (?, ?)
@@ -190,6 +201,8 @@ function detect() {
     const content = fs.readFileSync(extensionPath, 'utf8')
     console.log(`contains ${DEFAULT_API_URL}: ${content.includes(DEFAULT_API_URL)}`)
     console.log(`contains ${DEFAULT_REGISTER_URL}: ${content.includes(DEFAULT_REGISTER_URL)}`)
+    console.log(`contains auth-session fallback: ${content.includes(AUTH_SESSION_FALLBACK_SENTINEL)}`)
+    console.log(`contains user-status fallback: ${content.includes(USER_STATUS_FALLBACK_SENTINEL)}`)
   }
 }
 
