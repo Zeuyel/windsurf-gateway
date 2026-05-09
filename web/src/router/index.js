@@ -4,6 +4,9 @@ import Layout from '../components/Layout.vue'
 import Login from '../views/Login.vue'
 import Dashboard from '../views/Dashboard.vue'
 import Tokens from '../views/Tokens.vue'
+import Users from '../views/Users.vue'
+import Stats from '../views/Stats.vue'
+import Settings from '../views/Settings.vue'
 import Admin from '../views/Admin.vue'
 
 const routes = [
@@ -28,6 +31,27 @@ const routes = [
     component: Layout,
     children: [
       { path: '', component: Tokens, meta: { auth: true, admin: true } }
+    ]
+  },
+  {
+    path: '/users',
+    component: Layout,
+    children: [
+      { path: '', component: Users, meta: { auth: true, admin: true } }
+    ]
+  },
+  {
+    path: '/stats',
+    component: Layout,
+    children: [
+      { path: '', component: Stats, meta: { auth: true, admin: true } }
+    ]
+  },
+  {
+    path: '/settings',
+    component: Layout,
+    children: [
+      { path: '', component: Settings, meta: { auth: true } }
     ]
   },
   {
