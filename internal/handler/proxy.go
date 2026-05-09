@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"windsurf-gateway/internal/database"
 	"windsurf-gateway/internal/logger"
@@ -107,6 +108,7 @@ func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *da
 		Path:          requestPath,
 		Headers:       c.Request.Header,
 		Body:          body,
+		ContentType:   c.ContentType(),
 		ClientIP:      proxy.GetClientIP(c.Request),
 		UserAgent:     c.Request.UserAgent(),
 		TenantAddress: backendToken.TenantAddress,
@@ -289,9 +291,19 @@ func respError(resp *proxy.ProxyResponse) string {
 }
 
 func truncateErrorMessage(value string) string {
-	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(sanitizeUTF8(value))
 	if len(value) <= 1000 {
 		return value
 	}
 	return value[:1000]
+}
+
+func sanitizeUTF8(value string) string {
+	if value == "" {
+		return value
+	}
+	if utf8.ValidString(value) {
+		return value
+	}
+	return strings.ToValidUTF8(value, "")
 }

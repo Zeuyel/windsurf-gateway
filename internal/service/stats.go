@@ -45,9 +45,9 @@ func (s *StatsService) GetOverview() (map[string]interface{}, error) {
 	}
 
 	strategy := string(StrategyRoundRobin)
-	var lbConfig database.SystemConfig
-	if err := s.db.Where("`key` = ?", "load_balancer_strategy").First(&lbConfig).Error; err == nil && lbConfig.Value != "" {
-		strategy = lbConfig.Value
+	var values []string
+	if err := s.db.Model(&database.SystemConfig{}).Where("`key` = ?", "load_balancer_strategy").Limit(1).Pluck("value", &values).Error; err == nil && len(values) > 0 && values[0] != "" {
+		strategy = values[0]
 	}
 
 	return map[string]interface{}{

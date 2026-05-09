@@ -52,6 +52,7 @@ type ProxyRequest struct {
 	Path          string
 	Headers       http.Header
 	Body          []byte
+	ContentType   string
 	ClientIP      string
 	UserAgent     string
 	TenantAddress string
@@ -266,9 +267,18 @@ func (p *ProxyService) buildTargetURL(tenantAddress, path string) (string, error
 }
 
 func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, targetURL string) (*http.Request, error) {
+	bodyBytes := req.Body
+	if req.Token != nil && req.Token.Token != "" {
+		rewrittenBody, err := rewriteUpstreamAuthPayload(req.ContentType, req.Body, req.Token.Token)
+		if err != nil {
+			return nil, err
+		}
+		bodyBytes = rewrittenBody
+	}
+
 	var body io.Reader
-	if len(req.Body) > 0 {
-		body = bytes.NewReader(req.Body)
+	if len(bodyBytes) > 0 {
+		body = bytes.NewReader(bodyBytes)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, body)
@@ -288,6 +298,9 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 	if req.Token != nil && req.Token.Token != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+req.Token.Token)
 		httpReq.Header.Set("X-Api-Key", req.Token.Token)
+	}
+	if len(bodyBytes) > 0 {
+		httpReq.ContentLength = int64(len(bodyBytes))
 	}
 
 	parsedTarget, err := url.Parse(targetURL)

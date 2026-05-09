@@ -19,6 +19,8 @@ import (
 	"windsurf-gateway/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 func main() {
@@ -51,6 +53,9 @@ func main() {
 	}
 
 	services := service.NewServices(db, rdb, cfg)
+	if err := services.SystemConfig.EnsureDefaults(); err != nil {
+		logger.Warnf("Failed to ensure default system config: %v", err)
+	}
 
 	if err := services.Auth.CreateDefaultAdmin(); err != nil {
 		logger.Warnf("Failed to create default admin: %v", err)
@@ -62,7 +67,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:         cfg.Server.GetServerAddr(),
-		Handler:      router,
+		Handler:      h2c.NewHandler(router, &http2.Server{}),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,

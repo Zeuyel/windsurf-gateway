@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"windsurf-gateway/internal/database"
 
 	"gorm.io/gorm"
@@ -15,24 +16,50 @@ func NewSystemConfigService(db *gorm.DB) *SystemConfigService {
 }
 
 func (s *SystemConfigService) Get(key string) (string, error) {
-	var config database.SystemConfig
-	if err := s.db.Where("`key` = ?", key).First(&config).Error; err != nil {
+	values := make([]string, 0)
+	if err := s.db.Model(&database.SystemConfig{}).Where("`key` = ?", key).Limit(1).Pluck("value", &values).Error; err != nil {
 		return "", err
 	}
-	return config.Value, nil
+	if len(values) == 0 {
+		return "", gorm.ErrRecordNotFound
+	}
+	return values[0], nil
 }
 
 func (s *SystemConfigService) Set(key, value string) error {
 	var config database.SystemConfig
-	result := s.db.Where("`key` = ?", key).First(&config)
+	result := s.db.Where("`key` = ?", key).Limit(1).Find(&config)
 
 	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
 		config = database.SystemConfig{Key: key, Value: value}
 		return s.db.Create(&config).Error
 	}
 
 	config.Value = value
 	return s.db.Save(&config).Error
+}
+
+func (s *SystemConfigService) EnsureDefaults() error {
+	defaults := map[string]string{
+		"load_balancer_strategy": "round_robin",
+	}
+
+	for key, value := range defaults {
+		_, err := s.Get(key)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := s.Set(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SystemConfigService) GetAll() ([]database.SystemConfig, error) {

@@ -125,40 +125,40 @@ function patchGlobalState(gateway) {
   }
   
   // Mock windsurfAuthStatus to skip signup
-  const existingAuthStatus = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get('windsurfAuthStatus')
-  if (!existingAuthStatus) {
-    const mockAuthStatus = {
-      apiKey: 'devin-session-token$mocked-for-gateway',
-      allowedCommandModelConfigsProtoBinaryBase64: []
-    }
-    db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)').run('windsurfAuthStatus', JSON.stringify(mockAuthStatus))
-    console.log('globalState windsurfAuthStatus -> mocked')
+  const mockAuthStatus = {
+    apiKey: 'sk-ws-01-gateway-placeholder',
+    allowedCommandModelConfigsProtoBinaryBase64: []
   }
+  db.prepare(`
+    INSERT INTO ItemTable (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run('windsurfAuthStatus', JSON.stringify(mockAuthStatus))
+  console.log('globalState windsurfAuthStatus -> mocked')
   
   // Mock onboarding completion
-  const existingOnboarding = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get('windsurfOnboarding')
-  if (!existingOnboarding) {
-    db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)').run('windsurfOnboarding', JSON.stringify(true))
-    console.log('globalState windsurfOnboarding -> true')
-  }
+  db.prepare(`
+    INSERT INTO ItemTable (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run('windsurfOnboarding', JSON.stringify(true))
+  console.log('globalState windsurfOnboarding -> true')
   
   // Mock product education completed
-  const existingProductEducation = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get('windsurfProductEducation')
-  if (!existingProductEducation) {
-    const mockProductEducation = {
-      onboardingState: 2,
-      onboardingItems: [
-        {
-          id: 'windsurf.prioritized.chat.open',
-          title: 'Code with Cascade',
-          completed: true,
-          command: 'windsurf.prioritized.chat.open'
-        }
-      ]
-    }
-    db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)').run('windsurfProductEducation', JSON.stringify(mockProductEducation))
-    console.log('globalState windsurfProductEducation -> mocked')
+  const mockProductEducation = {
+    onboardingState: 2,
+    onboardingItems: [
+      {
+        id: 'windsurf.prioritized.chat.open',
+        title: 'Code with Cascade',
+        completed: true,
+        command: 'windsurf.prioritized.chat.open'
+      }
+    ]
   }
+  db.prepare(`
+    INSERT INTO ItemTable (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run('windsurfProductEducation', JSON.stringify(mockProductEducation))
+  console.log('globalState windsurfProductEducation -> mocked')
   
   db.close()
   return rows.length > 0
