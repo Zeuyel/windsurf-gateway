@@ -123,11 +123,10 @@ func (s *SmartTokenImportService) Import(req *SmartTokenImportRequest) (*SmartTo
 			result.Orgs = login.Orgs
 			return nil, &SmartTokenImportSelectionError{Result: result}
 		}
-		primaryKey, err := s.windsurf.GetPrimaryAPIKeyForDevs(login.SessionToken)
-		if err != nil {
-			return nil, err
+		backendToken = strings.TrimSpace(login.SessionToken)
+		if backendToken == "" {
+			return nil, fmt.Errorf("Devin WindsurfPostAuth 未返回 session token")
 		}
-		backendToken = primaryKey.APIKey
 		tenantAddress = DefaultWindsurfAPIURL
 		result.BackendTokenKind = classifyBackendTokenKind(backendToken)
 	case "devin_native":
@@ -140,11 +139,10 @@ func (s *SmartTokenImportService) Import(req *SmartTokenImportRequest) (*SmartTo
 			result.Orgs = login.Orgs
 			return nil, &SmartTokenImportSelectionError{Result: result}
 		}
-		primaryKey, err := s.windsurf.GetPrimaryAPIKeyForDevs(login.SessionToken)
-		if err != nil {
-			return nil, err
+		backendToken = strings.TrimSpace(login.SessionToken)
+		if backendToken == "" {
+			return nil, fmt.Errorf("Devin Native WindsurfPostAuth 未返回 session token")
 		}
-		backendToken = primaryKey.APIKey
 		tenantAddress = DefaultWindsurfAPIURL
 		result.BackendTokenKind = classifyBackendTokenKind(backendToken)
 	case "sso", "blocked", "no_password", "devin_native_no_password", "not_found":
