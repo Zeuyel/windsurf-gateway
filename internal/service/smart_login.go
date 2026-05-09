@@ -60,7 +60,7 @@ type SmartLoginService struct {
 
 func NewSmartLoginService() *SmartLoginService {
 	return &SmartLoginService{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: newExternalHTTPClient(30 * time.Second),
 	}
 }
 
@@ -107,15 +107,16 @@ func (s *SmartLoginService) checkUserLoginMethod(email string) (*CheckUserLoginM
 	url := fmt.Sprintf("%s/exa.seat_management_pb.SeatManagementService/CheckUserLoginMethod", WindsurfBackendURL)
 	body := encodeProtoStringField(1, email)
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/proto")
-	req.Header.Set("Connect-Protocol-Version", "1")
-	applyHeaders(req.Header, defaultBrowserHeaders("https://windsurf.com", "https://windsurf.com/account/login"))
-
-	resp, err := s.httpClient.Do(req)
+	resp, err := doRequestWithRetry(s.httpClient, 3, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/proto")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		applyHeaders(req.Header, defaultBrowserHeaders("https://windsurf.com", "https://windsurf.com/account/login"))
+		return req, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -157,14 +158,15 @@ func (s *SmartLoginService) postConnectionsRequest(url string, payload map[strin
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	applyHeaders(req.Header, defaultBrowserHeaders(origin, referer))
-
-	resp, err := s.httpClient.Do(req)
+	resp, err := doRequestWithRetry(s.httpClient, 2, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		applyHeaders(req.Header, defaultBrowserHeaders(origin, referer))
+		return req, nil
+	})
 	if err != nil {
 		return nil, err
 	}

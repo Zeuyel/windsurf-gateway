@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import client from '../api/client'
+import { clearStoredSession, readStoredSession, writeStoredSession } from './session'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({ user: null, token: '' }),
@@ -10,16 +11,15 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     init() {
       if (!this.token) {
-        this.token = localStorage.getItem('token') || ''
-        const raw = localStorage.getItem('user')
-        this.user = raw ? JSON.parse(raw) : null
+        const session = readStoredSession()
+        this.token = session.token
+        this.user = session.user
       }
     },
     setSession(user, token = this.token) {
       this.user = user
       this.token = token
-      localStorage.setItem('user', JSON.stringify(user))
-      localStorage.setItem('token', token || '')
+      writeStoredSession(user, token)
     },
     async login(username, password, admin = false) {
       const url = admin ? '/auth/login' : '/user-auth/login'
@@ -37,7 +37,7 @@ export const useAuthStore = defineStore('auth', {
     logout() {
       this.user = null
       this.token = ''
-      localStorage.clear()
+      clearStoredSession()
     },
   },
 })

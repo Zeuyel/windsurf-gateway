@@ -101,13 +101,14 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const loading = ref(false)
 const activeTab = ref('admin')
@@ -133,6 +134,13 @@ const userRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
+
+onMounted(() => {
+  if (route.query.reason === 'session-expired') {
+    ElMessage.warning('登录已失效，请重新登录')
+    router.replace('/login')
+  }
+})
 
 const handleAdminLogin = async () => {
   if (!adminFormRef.value) return
@@ -255,4 +263,3 @@ const handleUserLogin = async () => {
   text-decoration: underline;
 }
 </style>
-

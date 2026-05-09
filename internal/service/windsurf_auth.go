@@ -28,7 +28,7 @@ type WindsurfAuthService struct {
 }
 
 func NewWindsurfAuthService() *WindsurfAuthService {
-	return &WindsurfAuthService{httpClient: &http.Client{Timeout: 30 * time.Second}}
+	return &WindsurfAuthService{httpClient: newExternalHTTPClient(30 * time.Second)}
 }
 
 func (s *WindsurfAuthService) RegisterUser(firebaseIDToken string) (*WindsurfRegisterUserResponse, error) {
@@ -99,15 +99,16 @@ func (s *WindsurfAuthService) GetPrimaryAPIKeyForDevs(sessionToken string) (*Win
 	url := fmt.Sprintf("%s/exa.seat_management_pb.SeatManagementService/GetPrimaryApiKeyForDevsOnly", WindsurfBackendURL)
 	body := encodeProtoStringField(1, sessionToken)
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request failed: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/proto")
-	req.Header.Set("Connect-Protocol-Version", "1")
-	applyHeaders(req.Header, defaultBrowserHeaders("https://windsurf.com", "https://windsurf.com/"))
-
-	resp, err := s.httpClient.Do(req)
+	resp, err := doRequestWithRetry(s.httpClient, 3, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request failed: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/proto")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		applyHeaders(req.Header, defaultBrowserHeaders("https://windsurf.com", "https://windsurf.com/"))
+		return req, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

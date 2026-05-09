@@ -54,7 +54,7 @@ type DevinAuthService struct {
 }
 
 func NewDevinAuthService() *DevinAuthService {
-	return &DevinAuthService{httpClient: &http.Client{Timeout: 30 * time.Second}}
+	return &DevinAuthService{httpClient: newExternalHTTPClient(30 * time.Second)}
 }
 
 func (s *DevinAuthService) PasswordLogin(email, password string) (*DevinPasswordLoginResponse, error) {
@@ -108,17 +108,18 @@ func (s *DevinAuthService) WindsurfPostAuth(authToken, orgID string) (*DevinWind
 		body = append(body, encodeProtoStringField(2, strings.TrimSpace(orgID))...)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request failed: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/proto")
-	req.Header.Set("Connect-Protocol-Version", "1")
-	req.Header.Set("X-Devin-Auth1-Token", authToken)
-	applyHeaders(req.Header, defaultBrowserHeaders("https://windsurf.com", "https://windsurf.com/account/login"))
-	req.Header.Set("Sec-Fetch-Site", "same-site")
-
-	resp, err := s.httpClient.Do(req)
+	resp, err := doRequestWithRetry(s.httpClient, 3, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request failed: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/proto")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		req.Header.Set("X-Devin-Auth1-Token", authToken)
+		applyHeaders(req.Header, defaultBrowserHeaders("https://windsurf.com", "https://windsurf.com/account/login"))
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		return req, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
