@@ -1,235 +1,196 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
 
-const WINDSURF_CONFIG_DIR = path.join(os.homedir(), '.config', 'Windsurf');
-const SETTINGS_PATH = path.join(WINDSURF_CONFIG_DIR, 'User', 'settings.json');
-const BACKUP_DIR = path.join(WINDSURF_CONFIG_DIR, 'manual-auth-restore-' + Date.now().toString(36));
+const DEFAULT_API_URL = 'https://server.codeium.com'
+const CONFIG_KEY = 'codeium.apiServerUrl'
+const REGISTER_CONFIG_KEY = 'codeium.registerApiServerUrl'
+const DEFAULT_REGISTER_URL = 'https://register.windsurf.com'
 
-const DEFAULT_API_URL = 'https://server.codeium.com';
-const CONFIG_KEY = 'codeium.apiServerUrl';
-
-function printBanner() {
-    console.log(`
-╔══════════════════════════════════════════════╗
-║       Windsurf Open Patch Tool v1.0.0        ║
-║   Redirect Windsurf API to custom gateway     ║
-╚══════════════════════════════════════════════╝
-`);
+function argValue(name) {
+  const args = process.argv.slice(2)
+  const eq = args.find(a => a.startsWith(`${name}=`))
+  if (eq) return eq.slice(name.length + 1)
+  const idx = args.indexOf(name)
+  return idx >= 0 ? args[idx + 1] : null
 }
 
-function getGatewayUrl() {
-    const envUrl = process.env.WINDSURF_GATEWAY_URL;
-    if (envUrl) return envUrl;
-
-    const args = process.argv.slice(2);
-    const urlArg = args.find(a => a.startsWith('--gateway='));
-    if (urlArg) return urlArg.split('=')[1];
-
-    const urlIdx = args.indexOf('--gateway');
-    if (urlIdx !== -1 && args[urlIdx + 1]) return args[urlIdx + 1];
-
-    return null;
+function hasArg(name) {
+  return process.argv.includes(name)
 }
 
-function isRestore() {
-    return process.argv.includes('--restore') || process.argv.includes('-r');
+function homeConfigDir() {
+  if (process.env.WINDSURF_CONFIG_DIR) return process.env.WINDSURF_CONFIG_DIR
+  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', 'Windsurf')
+  if (process.platform === 'win32') return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'Windsurf')
+  return path.join(os.homedir(), '.config', 'Windsurf')
 }
 
-function backupFile(filePath) {
-    if (!fs.existsSync(filePath)) return null;
-
-    if (!fs.existsSync(BACKUP_DIR)) {
-        fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    }
-
-    const backupPath = path.join(BACKUP_DIR, path.basename(filePath));
-    fs.copyFileSync(filePath, backupPath);
-    console.log(`  ✓ Backed up: ${filePath} -> ${backupPath}`);
-    return backupPath;
+function defaultInstallDir() {
+  if (process.env.WINDSURF_INSTALL_DIR) return process.env.WINDSURF_INSTALL_DIR
+  if (process.platform === 'darwin') return '/Applications/Windsurf.app/Contents/Resources/app'
+  if (process.platform === 'win32') return path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Windsurf', 'resources', 'app')
+  return '/opt/windsurf/resources/app'
 }
 
-function patchSettings(gatewayUrl) {
-    if (!fs.existsSync(SETTINGS_PATH)) {
-        console.log('  ⚠ settings.json not found, creating new one');
-        const settings = { [CONFIG_KEY]: gatewayUrl };
-        fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
-        fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 4));
-        console.log(`  ✓ Created settings.json with gateway URL`);
-        return true;
-    }
+const configDir = homeConfigDir()
+const installDir = defaultInstallDir()
+const settingsPath = path.join(configDir, 'User', 'settings.json')
+const globalStatePath = path.join(configDir, 'User', 'globalStorage', 'state.vscdb')
+const extensionPath = path.join(installDir, 'extensions', 'windsurf', 'dist', 'extension.js')
+const backupRoot = path.join(configDir, 'windsurf-gateway-backups')
 
-    backupFile(SETTINGS_PATH);
-
-    let settings;
-    try {
-        settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
-    } catch (e) {
-        console.log('  ⚠ Failed to parse settings.json, creating new');
-        settings = {};
-    }
-
-    const oldValue = settings[CONFIG_KEY];
-    settings[CONFIG_KEY] = gatewayUrl;
-
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 4));
-
-    if (oldValue) {
-        console.log(`  ✓ Updated ${CONFIG_KEY}: "${oldValue}" -> "${gatewayUrl}"`);
-    } else {
-        console.log(`  ✓ Set ${CONFIG_KEY} = "${gatewayUrl}"`);
-    }
-
-    return true;
+function banner() {
+  console.log('\nWindsurf Gateway Patch Tool\n')
 }
 
-function patchExtension(gatewayUrl) {
-    const extensionPath = '/opt/windsurf/resources/app/extensions/windsurf/dist/extension.js';
-
-    if (!fs.existsSync(extensionPath)) {
-        console.log('  ⚠ Windsurf extension not found at', extensionPath);
-        console.log('  ℹ Skipping extension patch (settings.json patch is sufficient)');
-        return false;
-    }
-
-    backupFile(extensionPath);
-
-    let content = fs.readFileSync(extensionPath, 'utf8');
-
-    const oldDefault = 'DEFAULT_API_SERVER_URL="https://server.codeium.com"';
-    const newDefault = `DEFAULT_API_SERVER_URL="${gatewayUrl}"`;
-
-    if (content.includes(oldDefault)) {
-        content = content.replace(new RegExp(oldDefault.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), newDefault);
-        fs.writeFileSync(extensionPath, content);
-        console.log(`  ✓ Patched extension.js: DEFAULT_API_SERVER_URL -> "${gatewayUrl}"`);
-        return true;
-    }
-
-    console.log('  ⚠ Could not find DEFAULT_API_SERVER_URL in extension.js');
-    return false;
+function backup(filePath) {
+  if (!fs.existsSync(filePath)) return null
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const dir = path.join(backupRoot, stamp)
+  fs.mkdirSync(dir, { recursive: true })
+  const out = path.join(dir, path.basename(filePath))
+  fs.copyFileSync(filePath, out)
+  console.log(`backup ${filePath} -> ${out}`)
+  return out
 }
 
-function patchGlobalState(gatewayUrl) {
-    const stateDbPath = path.join(WINDSURF_CONFIG_DIR, 'User', 'globalStorage', 'state.vscdb');
+function readJson(filePath) {
+  if (!fs.existsSync(filePath)) return {}
+  return JSON.parse(fs.readFileSync(filePath, 'utf8') || '{}')
+}
 
-    if (!fs.existsSync(stateDbPath)) {
-        console.log('  ℹ globalState database not found, skipping');
-        return false;
-    }
+function writeJson(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n')
+}
 
-    try {
-        const Database = require('better-sqlite3');
-        backupFile(stateDbPath);
+function patchSettings(gateway, registerGateway) {
+  backup(settingsPath)
+  const settings = readJson(settingsPath)
+  const oldApi = settings[CONFIG_KEY]
+  const oldRegister = settings[REGISTER_CONFIG_KEY]
+  settings[CONFIG_KEY] = gateway
+  if (registerGateway) settings[REGISTER_CONFIG_KEY] = registerGateway
+  writeJson(settingsPath, settings)
+  console.log(`settings ${CONFIG_KEY}: ${oldApi || DEFAULT_API_URL} -> ${gateway}`)
+  if (registerGateway) console.log(`settings ${REGISTER_CONFIG_KEY}: ${oldRegister || DEFAULT_REGISTER_URL} -> ${registerGateway}`)
+}
 
-        const db = new Database(stateDbPath);
-        const row = db.prepare('SELECT key, value FROM ItemTable WHERE key LIKE ?').get('%apiServerUrl%');
+function patchExtension(gateway, registerGateway) {
+  if (!fs.existsSync(extensionPath)) {
+    console.log(`extension not found: ${extensionPath}`)
+    return false
+  }
+  backup(extensionPath)
+  let content = fs.readFileSync(extensionPath, 'utf8')
+  const before = content
+  content = content.replaceAll(`DEFAULT_API_SERVER_URL=\"${DEFAULT_API_URL}\"`, `DEFAULT_API_SERVER_URL=\"${gateway}\"`)
+  content = content.replaceAll(`DEFAULT_API_SERVER_URL="${DEFAULT_API_URL}"`, `DEFAULT_API_SERVER_URL="${gateway}"`)
+  if (registerGateway) {
+    content = content.replaceAll(`DEFAULT_REGISTER_API_SERVER_URL=\"${DEFAULT_REGISTER_URL}\"`, `DEFAULT_REGISTER_API_SERVER_URL=\"${registerGateway}\"`)
+    content = content.replaceAll(`DEFAULT_REGISTER_API_SERVER_URL="${DEFAULT_REGISTER_URL}"`, `DEFAULT_REGISTER_API_SERVER_URL="${registerGateway}"`)
+  }
+  if (content === before) {
+    console.log('extension constants not changed; default endpoint pattern not found')
+    return false
+  }
+  fs.writeFileSync(extensionPath, content)
+  console.log(`extension patched: ${extensionPath}`)
+  return true
+}
 
-        if (row) {
-            let value;
-            try {
-                value = JSON.parse(row.value);
-            } catch (e) {
-                value = row.value;
-            }
+function patchGlobalState(gateway) {
+  if (!fs.existsSync(globalStatePath)) {
+    console.log(`globalState not found: ${globalStatePath}`)
+    return false
+  }
+  let Database
+  try {
+    Database = require('better-sqlite3')
+  } catch (e) {
+    console.log('better-sqlite3 not installed; skip globalState')
+    return false
+  }
+  backup(globalStatePath)
+  const db = new Database(globalStatePath)
+  const rows = db.prepare('SELECT key,value FROM ItemTable WHERE key LIKE ? OR key LIKE ?').all('%apiServerUrl%', '%BASE_API_SERVER_URL%')
+  for (const row of rows) {
+    db.prepare('UPDATE ItemTable SET value = ? WHERE key = ?').run(JSON.stringify(gateway), row.key)
+    console.log(`globalState ${row.key} -> ${gateway}`)
+  }
+  db.close()
+  return rows.length > 0
+}
 
-            console.log(`  ✓ Found globalState entry: ${row.key}`);
-            console.log(`    Old value: ${JSON.stringify(value)}`);
-
-            const newValue = JSON.stringify(gatewayUrl);
-            db.prepare('UPDATE ItemTable SET value = ? WHERE key = ?').run(newValue, row.key);
-            console.log(`    Updated to: "${gatewayUrl}"`);
-        } else {
-            console.log('  ℹ No apiServerUrl entry in globalState');
-        }
-
-        db.close();
-        return true;
-    } catch (e) {
-        console.log(`  ⚠ Failed to patch globalState: ${e.message}`);
-        console.log('  ℹ This is optional, settings.json patch is sufficient');
-        return false;
-    }
+function detect() {
+  console.log(`configDir: ${configDir}`)
+  console.log(`installDir: ${installDir}`)
+  console.log(`settings: ${fs.existsSync(settingsPath) ? settingsPath : 'not found'}`)
+  console.log(`globalState: ${fs.existsSync(globalStatePath) ? globalStatePath : 'not found'}`)
+  console.log(`extension: ${fs.existsSync(extensionPath) ? extensionPath : 'not found'}`)
+  if (fs.existsSync(settingsPath)) {
+    const settings = readJson(settingsPath)
+    console.log(`${CONFIG_KEY}: ${settings[CONFIG_KEY] || '(default)'}`)
+    console.log(`${REGISTER_CONFIG_KEY}: ${settings[REGISTER_CONFIG_KEY] || '(default)'}`)
+  }
+  if (fs.existsSync(extensionPath)) {
+    const content = fs.readFileSync(extensionPath, 'utf8')
+    console.log(`contains ${DEFAULT_API_URL}: ${content.includes(DEFAULT_API_URL)}`)
+    console.log(`contains ${DEFAULT_REGISTER_URL}: ${content.includes(DEFAULT_REGISTER_URL)}`)
+  }
 }
 
 function restore() {
-    console.log('Restoring from backup...\n');
+  if (!fs.existsSync(backupRoot)) {
+    console.log('no backup root found')
+    return
+  }
+  const dirs = fs.readdirSync(backupRoot).sort().reverse()
+  if (dirs.length === 0) {
+    console.log('no backups found')
+    return
+  }
+  const dir = path.join(backupRoot, dirs[0])
+  const files = fs.readdirSync(dir)
+  for (const file of files) {
+    const src = path.join(dir, file)
+    if (file === 'settings.json') fs.copyFileSync(src, settingsPath)
+    if (file === 'extension.js') fs.copyFileSync(src, extensionPath)
+    if (file === 'state.vscdb') fs.copyFileSync(src, globalStatePath)
+    console.log(`restored ${file}`)
+  }
+  console.log(`restored from ${dir}`)
+}
 
-    if (!fs.existsSync(BACKUP_DIR)) {
-        const dirs = fs.readdirSync(WINDSURF_CONFIG_DIR)
-            .filter(d => d.startsWith('manual-auth-restore-'))
-            .sort()
-            .reverse();
-
-        if (dirs.length === 0) {
-            console.log('  ✗ No backup found');
-            return;
-        }
-
-        const latestBackup = path.join(WINDSURF_CONFIG_DIR, dirs[0]);
-        const files = fs.readdirSync(latestBackup);
-
-        for (const file of files) {
-            const src = path.join(latestBackup, file);
-
-            if (file === 'settings.json') {
-                fs.copyFileSync(src, SETTINGS_PATH);
-                console.log(`  ✓ Restored settings.json`);
-            } else if (file === 'extension.js') {
-                const extPath = '/opt/windsurf/resources/app/extensions/windsurf/dist/extension.js';
-                fs.copyFileSync(src, extPath);
-                console.log(`  ✓ Restored extension.js`);
-            } else if (file === 'state.vscdb') {
-                const statePath = path.join(WINDSURF_CONFIG_DIR, 'User', 'globalStorage', 'state.vscdb');
-                fs.copyFileSync(src, statePath);
-                console.log(`  ✓ Restored globalState database`);
-            }
-        }
-
-        console.log(`\n  ✓ Restored from backup: ${latestBackup}`);
-        return;
-    }
-
-    console.log('  No backup directory found');
+function usage() {
+  console.log('Usage:')
+  console.log('  node patch.js detect')
+  console.log('  node patch.js --gateway=https://gateway.example.com [--mode=config|extension|all]')
+  console.log('  node patch.js --restore')
+  console.log('Env:')
+  console.log('  WINDSURF_GATEWAY_URL=https://gateway.example.com')
+  console.log('  WINDSURF_CONFIG_DIR=/custom/config')
+  console.log('  WINDSURF_INSTALL_DIR=/custom/resources/app')
 }
 
 function main() {
-    printBanner();
-
-    if (isRestore()) {
-        restore();
-        return;
-    }
-
-    const gatewayUrl = getGatewayUrl();
-    if (!gatewayUrl) {
-        console.log('Usage:');
-        console.log('  node patch.js --gateway=https://your-gateway.com');
-        console.log('  WINDSURF_GATEWAY_URL=https://your-gateway.com node patch.js');
-        console.log('  node patch.js --restore');
-        console.log();
-        console.log('Environment variables:');
-        console.log('  WINDSURF_GATEWAY_URL  - Gateway server URL');
-        process.exit(1);
-    }
-
-    console.log(`Gateway URL: ${gatewayUrl}`);
-    console.log(`Windsurf config: ${WINDSURF_CONFIG_DIR}\n`);
-
-    console.log('[1/3] Patching settings.json...');
-    patchSettings(gatewayUrl);
-
-    console.log('\n[2/3] Patching extension.js...');
-    patchExtension(gatewayUrl);
-
-    console.log('\n[3/3] Patching globalState...');
-    patchGlobalState(gatewayUrl);
-
-    console.log(`\n✓ Patch complete! Backups saved to: ${BACKUP_DIR}`);
-    console.log('  Restart Windsurf for changes to take effect.');
-    console.log('  To restore: node patch.js --restore\n');
+  banner()
+  if (process.argv.includes('detect') || hasArg('--detect')) return detect()
+  if (hasArg('--restore') || hasArg('-r')) return restore()
+  const gateway = argValue('--gateway') || process.env.WINDSURF_GATEWAY_URL
+  const registerGateway = argValue('--register-gateway') || process.env.WINDSURF_REGISTER_GATEWAY_URL
+  const mode = argValue('--mode') || 'all'
+  if (!gateway) return usage()
+  if (!/^https?:\/\//.test(gateway)) throw new Error('gateway must start with http:// or https://')
+  if (mode === 'config' || mode === 'all') {
+    patchSettings(gateway, registerGateway)
+    patchGlobalState(gateway)
+  }
+  if (mode === 'extension' || mode === 'all') patchExtension(gateway, registerGateway)
+  console.log('\npatch done. Restart Windsurf.')
 }
 
-main();
+main()
