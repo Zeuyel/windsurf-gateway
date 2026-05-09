@@ -22,6 +22,10 @@ import (
 )
 
 func main() {
+	if err := config.LoadDotEnvIfPresent(".env"); err != nil {
+		log.Fatalf("Failed to load .env: %v", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)

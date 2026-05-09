@@ -58,6 +58,8 @@ npm install
 npm run dev
 ```
 
+直接 `go run ./cmd` 时，程序会优先尝试读取当前目录下的 `.env`。
+
 ## Patch Windsurf
 
 ```bash
