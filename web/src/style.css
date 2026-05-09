@@ -1,1 +1,90 @@
-*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,Arial;background:#0f172a;color:#e5e7eb}.navbar{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;background:#111827;border-bottom:1px solid #243244}.logo{font-weight:700;color:#60a5fa}.nav-links{display:flex;gap:18px;align-items:center}.nav-links a{color:#cbd5e1;text-decoration:none}.nav-links a.router-link-active{color:#60a5fa}.nav-links button,.card button{background:#2563eb;color:white;border:0;border-radius:8px;padding:9px 14px;cursor:pointer}.page{padding:32px}.login-page{min-height:100vh;display:grid;place-items:center}.card{background:#111827;border:1px solid #243244;border-radius:14px;padding:22px;margin:14px 0;box-shadow:0 10px 30px rgba(0,0,0,.25)}input{display:block;width:100%;padding:11px;margin:10px 0;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}code,pre{white-space:pre-wrap;word-break:break-all;background:#0b1220;padding:8px;border-radius:8px;display:block}.error{color:#f87171}
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f5f5f5;
+  color: #333;
+  line-height: 1.6;
+}
+
+#app {
+  height: 100vh;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+.el-card {
+  border-radius: 8px;
+  border: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.el-button {
+  border-radius: 6px;
+  transition: all 0.3s;
+}
+
+.el-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.el-input__wrapper {
+  border-radius: 6px;
+}
+
+.el-table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.el-table th {
+  background-color: #fafafa;
+  font-weight: 600;
+}
+
+.el-dialog {
+  border-radius: 12px;
+}
+
+.el-message-box {
+  border-radius: 12px;
+}
+
+.el-notification {
+  border-radius: 8px;
+}
+
+.el-tag {
+  border-radius: 4px;
+}
+
+.el-progress-bar__outer {
+  border-radius: 4px;
+}
+
+.el-pagination {
+  justify-content: flex-end;
+}

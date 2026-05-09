@@ -1,21 +1,26 @@
 {
-  "name": "web",
+  "name": "windsurf-gateway-frontend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Windsurf Gateway 管理界面",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
-  "keywords": [],
+  "keywords": ["vue", "gateway", "windsurf", "management", "dashboard"],
   "author": "",
   "license": "ISC",
-  "type": "module",
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.0",
     "axios": "^1.16.0",
+    "dayjs": "^1.11.0",
+    "echarts": "^5.4.0",
+    "element-plus": "^2.4.0",
     "pinia": "^2.3.1",
     "vue": "^3.5.34",
+    "vue-echarts": "^6.6.0",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
