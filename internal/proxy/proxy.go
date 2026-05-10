@@ -321,9 +321,10 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 	if req.Token != nil && req.Token.Token != "" {
 		rewrittenBody, err := rewriteUpstreamAuthPayload(req.ContentType, req.Body, req.Token.Token)
 		if err != nil {
-			return nil, err
+			logger.Warnf("[Proxy] Skip auth payload rewrite for %s %s: %v", req.Method, req.Path, err)
+		} else {
+			bodyBytes = rewrittenBody
 		}
-		bodyBytes = rewrittenBody
 	}
 
 	var body io.Reader

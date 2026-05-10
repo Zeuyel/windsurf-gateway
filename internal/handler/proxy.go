@@ -31,7 +31,7 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	requestID := uuid.NewString()
 	c.Writer.Header().Set("X-Request-ID", requestID)
 
-	userToken := extractBearerToken(c.GetHeader("Authorization"))
+	userToken := extractGatewayUserToken(c.GetHeader("Authorization"))
 	var user *database.User
 	var err error
 	if userToken != "" {
@@ -163,6 +163,23 @@ func extractBearerToken(value string) string {
 		return strings.TrimSpace(value[7:])
 	}
 	return value
+}
+
+func extractGatewayUserToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	if !strings.HasPrefix(strings.ToLower(value), "bearer ") {
+		return ""
+	}
+
+	token := strings.TrimSpace(value[7:])
+	if !strings.HasPrefix(strings.ToLower(token), "ws-") {
+		return ""
+	}
+	return token
 }
 
 func classifyProxyOutcome(resp *proxy.ProxyResponse, err error) service.TokenRequestOutcome {
