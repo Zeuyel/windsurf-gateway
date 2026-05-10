@@ -36,6 +36,7 @@ type upstreamAuthProfile struct {
 var metadataRewritePaths = map[string]struct{}{
 	"/exa.seat_management_pb.SeatManagementService/GetUserStatus":       {},
 	"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries": {},
+	"/exa.auth_pb.AuthService/GetUserJwt":                               {},
 	"/exa.api_server_pb.ApiServerService/GetStatus":                     {},
 	"/exa.api_server_pb.ApiServerService/GetCliModelConfigs":            {},
 	"/exa.api_server_pb.ApiServerService/GetModelStatuses":              {},
@@ -312,9 +313,9 @@ func rewriteAnyGatewayTokenInProto(data []byte, replacement string) ([]byte, err
 			replacementPayload := payload
 			localChanged := false
 
-			if token := gatewayuser.Extract(string(payload)); token != "" {
+			if token := strings.TrimSpace(string(payload)); gatewayuser.IsToken(token) {
 				replacementPayload = []byte(replacement)
-				localChanged = string(payload) != replacement
+				localChanged = token != replacement
 			} else {
 				rewrittenNested, err := rewriteAnyGatewayTokenInProto(payload, replacement)
 				if err == nil && !bytes.Equal(rewrittenNested, payload) {
