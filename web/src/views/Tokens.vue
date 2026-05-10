@@ -618,7 +618,7 @@ const maskToken = (value) => {
   return `${value.slice(0, 6)}...${value.slice(-4)}`
 }
 
-const formatCreditUsage = (used, available, total) => {
+const formatCreditUsage = (label, used, available, total) => {
   const usedValue = Number(used || 0)
   const availableValue = Number(available || 0)
   const totalValue = Number(total || 0)
@@ -627,10 +627,16 @@ const formatCreditUsage = (used, available, total) => {
   }
 
   const resolvedTotal = totalValue > 0 ? totalValue : usedValue + availableValue
-  if (resolvedTotal > 0) {
-    return `${usedValue}/${resolvedTotal}`
+  if (usedValue <= 0 && totalValue > 0 && availableValue >= totalValue) {
+    return `${label} 月额度 ${totalValue}`
   }
-  return `${usedValue}/${availableValue}`
+  if (usedValue <= 0 && availableValue > 0 && totalValue <= 0) {
+    return `${label} 可用 ${availableValue}`
+  }
+  if (resolvedTotal > 0) {
+    return `${label} 已用 ${usedValue}/${resolvedTotal}`
+  }
+  return `${label} 已用 ${usedValue}/${availableValue}`
 }
 
 const quotaCreditLines = (row) => {
@@ -639,13 +645,13 @@ const quotaCreditLines = (row) => {
   }
 
   const lines = []
-  const prompt = formatCreditUsage(row.used_prompt_credits, row.available_prompt_credits, row.monthly_prompt_credits)
-  const flow = formatCreditUsage(row.used_flow_credits, row.available_flow_credits, row.monthly_flow_credits)
-  const flex = formatCreditUsage(row.used_flex_credits, row.available_flex_credits, row.monthly_flex_credits)
+  const prompt = formatCreditUsage('Prompt', row.used_prompt_credits, row.available_prompt_credits, row.monthly_prompt_credits)
+  const flow = formatCreditUsage('Flow', row.used_flow_credits, row.available_flow_credits, row.monthly_flow_credits)
+  const flex = formatCreditUsage('Flex', row.used_flex_credits, row.available_flex_credits, row.monthly_flex_credits)
 
-  if (prompt) lines.push(`Prompt ${prompt}`)
-  if (flow) lines.push(`Flow ${flow}`)
-  if (flex) lines.push(`Flex ${flex}`)
+  if (prompt) lines.push(prompt)
+  if (flow) lines.push(flow)
+  if (flex) lines.push(flex)
 
   return lines.length > 0 ? lines : ['未返回 credit 明细']
 }

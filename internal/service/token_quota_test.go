@@ -68,11 +68,13 @@ func TestParsePlanStatusQuota(t *testing.T) {
 	planStatus := protoMessage(
 		protoBytesField(planStatusFieldPlanInfo, planInfo),
 		protoVarintField(planStatusFieldAvailablePrompt, 320),
-		protoVarintField(planStatusFieldUsedPrompt, 180),
 		protoVarintField(planStatusFieldDailyRemainingPct, 72),
 		protoVarintField(planStatusFieldWeeklyRemainingPct, 54),
 	)
-	response := protoMessage(protoBytesField(getPlanStatusResponseFieldPlanStatus, planStatus))
+	response := protoMessage(
+		protoBytesField(getPlanStatusResponseFieldPlanStatus, planStatus),
+		protoVarintField(getPlanStatusResponseFieldTeamUsedPromptCreds, 180),
+	)
 
 	snapshot, err := parsePlanStatusQuota(response)
 	if err != nil {

@@ -13,27 +13,28 @@ import (
 )
 
 const (
-	getUserStatusResponseFieldUserStatus = 1
-	getUserStatusResponseFieldPlanInfo   = 2
-	getPlanStatusResponseFieldPlanStatus = 1
-	userStatusFieldPlanStatus            = 13
-	planStatusFieldPlanInfo              = 1
-	planStatusFieldAvailableFlex         = 4
-	planStatusFieldUsedFlow              = 5
-	planStatusFieldUsedPrompt            = 6
-	planStatusFieldUsedFlex              = 7
-	planStatusFieldAvailablePrompt       = 8
-	planStatusFieldAvailableFlow         = 9
-	planStatusFieldDailyRemainingPct     = 14
-	planStatusFieldWeeklyRemainingPct    = 15
-	planStatusFieldDailyResetAtUnix      = 17
-	planStatusFieldWeeklyResetAtUnix     = 18
-	planInfoFieldPlanName                = 2
-	planInfoFieldMonthlyPromptCredits    = 12
-	planInfoFieldMonthlyFlowCredits      = 13
-	planInfoFieldMonthlyFlexCredits      = 14
-	planInfoFieldHideDailyQuota          = 36
-	planInfoFieldHideWeeklyQuota         = 37
+	getUserStatusResponseFieldUserStatus          = 1
+	getUserStatusResponseFieldPlanInfo            = 2
+	getPlanStatusResponseFieldPlanStatus          = 1
+	getPlanStatusResponseFieldTeamUsedPromptCreds = 2
+	userStatusFieldPlanStatus                     = 13
+	planStatusFieldPlanInfo                       = 1
+	planStatusFieldAvailableFlex                  = 4
+	planStatusFieldUsedFlow                       = 5
+	planStatusFieldUsedPrompt                     = 6
+	planStatusFieldUsedFlex                       = 7
+	planStatusFieldAvailablePrompt                = 8
+	planStatusFieldAvailableFlow                  = 9
+	planStatusFieldDailyRemainingPct              = 14
+	planStatusFieldWeeklyRemainingPct             = 15
+	planStatusFieldDailyResetAtUnix               = 17
+	planStatusFieldWeeklyResetAtUnix              = 18
+	planInfoFieldPlanName                         = 2
+	planInfoFieldMonthlyPromptCredits             = 12
+	planInfoFieldMonthlyFlowCredits               = 13
+	planInfoFieldMonthlyFlexCredits               = 14
+	planInfoFieldHideDailyQuota                   = 36
+	planInfoFieldHideWeeklyQuota                  = 37
 )
 
 type TokenQuotaSnapshot struct {
@@ -240,9 +241,12 @@ func parsePlanStatusQuota(data []byte) (*TokenQuotaSnapshot, error) {
 		wireType := int(tag & 0x7)
 		switch wireType {
 		case 0:
-			_, width, ok := decodeVarint(data, idx)
+			value, width, ok := decodeVarint(data, idx)
 			if !ok {
 				return nil, fmt.Errorf("decode GetPlanStatusResponse field %d failed", fieldNumber)
+			}
+			if fieldNumber == getPlanStatusResponseFieldTeamUsedPromptCreds {
+				snapshot.UsedPromptCredits = int(value)
 			}
 			idx += width
 		case 2:
