@@ -47,8 +47,17 @@ func TestCreateRequestSkipsMalformedProtoRewrite(t *testing.T) {
 	if auth := req.Header.Get("Authorization"); auth != "Bearer "+token.Token {
 		t.Fatalf("unexpected authorization header: %q", auth)
 	}
-	if got := req.Header.Get("User-Agent"); got == "" || got == "connect-go/1.18.1 (go1.26.1)" {
-		t.Fatalf("expected privacy-mode upstream user-agent, got %q", got)
+	if got := req.Header.Get("User-Agent"); got != "connect-go/1.18.1 (go1.26.1)" {
+		t.Fatalf("expected real upstream user-agent passthrough, got %q", got)
+	}
+	if got := req.Header.Get("Accept"); got != "" {
+		t.Fatalf("expected Accept header to remain absent when client omitted it, got %q", got)
+	}
+	if got := req.Header.Get("Origin"); got != "" {
+		t.Fatalf("expected Origin header to remain absent, got %q", got)
+	}
+	if got := req.Header.Get("Referer"); got != "" {
+		t.Fatalf("expected Referer header to remain absent, got %q", got)
 	}
 	if got := req.Header.Get("X-Request-Session-Id"); len(got) != 64 {
 		t.Fatalf("expected stable upstream session id, got %q", got)

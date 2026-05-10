@@ -141,7 +141,17 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 		return &ProxyResponse{StatusCode: http.StatusBadGateway, Latency: time.Since(startTime), ErrorMessage: err.Error()}, fmt.Errorf("create request: %w", err)
 	}
 
-	logger.Infof("[Proxy] Forwarding %s %s via token=%s", req.Method, targetURL, req.Token.ID)
+	logger.Infof(
+		"[Proxy] Forwarding %s %s via token=%s ua=%q content_type=%q accept=%q origin=%q referer=%q",
+		req.Method,
+		targetURL,
+		req.Token.ID,
+		httpReq.Header.Get("User-Agent"),
+		httpReq.Header.Get("Content-Type"),
+		httpReq.Header.Get("Accept"),
+		httpReq.Header.Get("Origin"),
+		httpReq.Header.Get("Referer"),
+	)
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -290,9 +300,6 @@ func cloneBytes(value []byte) []byte {
 func (p *ProxyService) buildUpstreamUserAgent(req *ProxyRequest) string {
 	if p.config.Subscription.UserAgent != "" {
 		return p.config.Subscription.UserAgent
-	}
-	if req != nil && req.Token != nil {
-		return "WindsurfGateway/" + stableProfileComponent("ua", req.Token, 12)
 	}
 	if req != nil && strings.TrimSpace(req.UserAgent) != "" {
 		return strings.TrimSpace(req.UserAgent)
