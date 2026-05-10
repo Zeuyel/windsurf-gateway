@@ -39,8 +39,11 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	requestID := uuid.NewString()
 	c.Writer.Header().Set("X-Request-ID", requestID)
 
-	userToken := extractGatewayUserToken(c.GetHeader("Authorization"), c.GetHeader("X-Api-Key"))
+	authHeader := c.GetHeader("Authorization")
+	apiKeyHeader := c.GetHeader("X-Api-Key")
+	userToken := extractGatewayUserToken(authHeader, apiKeyHeader)
 	if userToken == "" {
+		logGatewayAuthFailure(c, requestID, "missing_or_unextractable_user_token", authHeader, apiKeyHeader, "")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "gateway user token required"})
 		return
 	}
@@ -49,6 +52,7 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	var err error
 	user, err = h.services.UserAuth.GetUserByToken(userToken)
 	if err != nil {
+		logGatewayAuthFailure(c, requestID, "unknown_user_token", authHeader, apiKeyHeader, userToken)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user token"})
 		return
 	}
@@ -422,4 +426,75 @@ func sanitizeUTF8(value string) string {
 		return value
 	}
 	return strings.ToValidUTF8(value, "")
+}
+
+func logGatewayAuthFailure(c *gin.Context, requestID, reason, authHeader, apiKeyHeader, extractedToken string) {
+	logger.Warnf(
+		"[ProxyAuth] request=%s method=%s path=%s reason=%s authorization=%s x_api_key=%s extracted=%s client_ip=%s user_agent=%q",
+		requestID,
+		c.Request.Method,
+		buildRequestPath(c),
+		reason,
+		describeGatewayAuthHeader(authHeader),
+		describeGatewayAuthHeader(apiKeyHeader),
+		summarizeGatewayToken(extractedToken),
+		proxy.GetClientIP(c.Request),
+		c.Request.UserAgent(),
+	)
+}
+
+func describeGatewayAuthHeader(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "empty"
+	}
+
+	scheme := "raw"
+	lower := strings.ToLower(value)
+	switch {
+	case strings.HasPrefix(lower, "bearer "):
+		scheme = "bearer"
+		value = strings.TrimSpace(value[7:])
+	case strings.HasPrefix(lower, "basic "):
+		scheme = "basic"
+		value = strings.TrimSpace(value[6:])
+	}
+
+	return fmt.Sprintf(
+		"scheme=%s len=%d hash=%s token=%s",
+		scheme,
+		len(value),
+		shortHash(value),
+		summarizeGatewayToken(gatewayuser.Extract(strings.TrimSpace(canonicalizeAuthHeaderValue(scheme, value)))),
+	)
+}
+
+func canonicalizeAuthHeaderValue(scheme, value string) string {
+	switch scheme {
+	case "bearer":
+		return "Bearer " + value
+	case "basic":
+		return "Basic " + value
+	default:
+		return value
+	}
+}
+
+func summarizeGatewayToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "none"
+	}
+	if len(token) <= len(gatewayuser.TokenPrefix)+8 {
+		return token
+	}
+	return token[:len(gatewayuser.TokenPrefix)+4] + "..." + token[len(token)-4:]
+}
+
+func shortHash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:6])
 }

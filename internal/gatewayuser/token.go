@@ -2,6 +2,7 @@ package gatewayuser
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"strings"
 )
@@ -45,12 +46,23 @@ func Extract(value string) string {
 	lower := strings.ToLower(value)
 	switch {
 	case strings.HasPrefix(lower, "bearer "):
-		value = strings.TrimSpace(value[7:])
+		return extractRawToken(strings.TrimSpace(value[7:]))
 	case strings.HasPrefix(lower, "basic "):
 		value = strings.TrimSpace(value[6:])
+		if token := extractRawToken(value); token != "" {
+			return token
+		}
+		if decoded := decodeBasicValue(value); decoded != "" {
+			return extractRawToken(decoded)
+		}
+		return ""
+	default:
+		return extractRawToken(value)
 	}
+}
 
-	lower = strings.ToLower(value)
+func extractRawToken(value string) string {
+	lower := strings.ToLower(value)
 	idx := strings.Index(lower, TokenPrefix)
 	if idx < 0 {
 		return ""
@@ -75,6 +87,25 @@ func Extract(value string) string {
 
 	if IsToken(token) {
 		return token
+	}
+	return ""
+}
+
+func decodeBasicValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, encoding := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		decoded, err := encoding.DecodeString(value)
+		if err == nil {
+			return strings.TrimSpace(string(decoded))
+		}
 	}
 	return ""
 }

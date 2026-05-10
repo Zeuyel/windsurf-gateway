@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -100,6 +103,21 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 	router.Use(middleware.CORS(cfg))
+	router.Use(func(c *gin.Context) {
+		if shouldLogGatewayIngress(c.Request) {
+			logger.Infof(
+				"[GatewayIngress] method=%s path=%s authorization=%s x_api_key=%s user_agent=%q content_type=%q accept=%q",
+				c.Request.Method,
+				c.Request.URL.Path,
+				describeGatewayHeader(c.GetHeader("Authorization")),
+				describeGatewayHeader(c.GetHeader("X-Api-Key")),
+				c.Request.UserAgent(),
+				c.GetHeader("Content-Type"),
+				c.GetHeader("Accept"),
+			)
+		}
+		c.Next()
+	})
 
 	router.Any("/proxy/*path", handlers.Proxy.ForwardWithUserToken)
 
@@ -254,4 +272,42 @@ func isWindsurfAPIRequest(r *http.Request) bool {
 		strings.Contains(path, "codeium") ||
 		strings.Contains(path, "exafunction") ||
 		strings.Contains(path, "language_server")
+}
+
+func shouldLogGatewayIngress(r *http.Request) bool {
+	path := strings.ToLower(strings.TrimSpace(r.URL.Path))
+	if path == "" {
+		return false
+	}
+	return strings.HasPrefix(path, "/exa.") ||
+		strings.HasPrefix(path, "/proxy/exa.") ||
+		strings.HasPrefix(path, "/api/proxy/exa.")
+}
+
+func describeGatewayHeader(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "empty"
+	}
+
+	scheme := "raw"
+	lower := strings.ToLower(value)
+	switch {
+	case strings.HasPrefix(lower, "bearer "):
+		scheme = "bearer"
+		value = strings.TrimSpace(value[7:])
+	case strings.HasPrefix(lower, "basic "):
+		scheme = "basic"
+		value = strings.TrimSpace(value[6:])
+	}
+
+	return "scheme=" + scheme + " len=" + strconv.Itoa(len(value)) + " hash=" + shortGatewayHeaderHash(value)
+}
+
+func shortGatewayHeaderHash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:6])
 }

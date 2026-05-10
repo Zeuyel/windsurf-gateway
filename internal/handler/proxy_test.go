@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/base64"
 	"net/http"
 	"testing"
 
@@ -26,6 +27,16 @@ func TestExtractGatewayUserToken(t *testing.T) {
 		{
 			name:   "gateway duplicated basic token",
 			header: "Basic devin-session-token$abcdef1234567890-devin-session-token$abcdef1234567890",
+			want:   "devin-session-token$abcdef1234567890",
+		},
+		{
+			name:   "gateway standard basic username token",
+			header: "Basic " + base64.StdEncoding.EncodeToString([]byte("devin-session-token$abcdef1234567890:")),
+			want:   "devin-session-token$abcdef1234567890",
+		},
+		{
+			name:   "gateway standard basic password token",
+			header: "Basic " + base64.StdEncoding.EncodeToString([]byte("gateway:devin-session-token$abcdef1234567890")),
 			want:   "devin-session-token$abcdef1234567890",
 		},
 		{
