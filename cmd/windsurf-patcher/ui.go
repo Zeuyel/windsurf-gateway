@@ -674,7 +674,7 @@ const indexHTML = `<!doctype html>
               <div class="step-index">3</div>
               <div>
                 <h2>填写 Gateway 地址</h2>
-                <p>填 Gateway 根地址，不要带 <code>/proxy</code>。如果你单独改了 register 地址，也可以一起写入。</p>
+                <p>填 Gateway 根地址，不要带 <code>/proxy</code>。如果你的 Gateway 也代理 Windsurf 登录/注册接口，再额外填写下面的登录/注册地址。</p>
               </div>
             </div>
             <span class="pill" id="pill-gateway">待填写</span>
@@ -687,9 +687,9 @@ const indexHTML = `<!doctype html>
             </div>
             <div class="field-row">
               <div class="field">
-                <label for="register-gateway">Register 地址</label>
+                <label for="register-gateway">登录/注册接口地址</label>
                 <input id="register-gateway" placeholder="可选">
-                <div class="field-hint">不填则保持当前 register 地址。</div>
+                <div class="field-hint">只在你的 Gateway 也接管 <code>codeium.registerApiServerUrl</code> 时填写；普通代理场景留空即可。</div>
               </div>
               <div class="field">
                 <label for="patch-mode">改写范围</label>

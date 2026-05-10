@@ -59,6 +59,47 @@ func TestRewriteUpstreamAuthPayloadRewritesConnectProtoEnvelope(t *testing.T) {
 	}
 }
 
+func TestRewriteUpstreamAuthPayloadRewritesGatewayUserToken(t *testing.T) {
+	backendToken := "sk-ws-01-backend"
+	clientToken := "ws-abc123"
+
+	message := protoMessage(protoStringField(1, clientToken))
+	framed := connectProtoFrame(0, message)
+
+	rewritten, err := rewriteUpstreamAuthPayload("application/connect+proto", framed, backendToken)
+	if err != nil {
+		t.Fatalf("rewriteUpstreamAuthPayload returned error: %v", err)
+	}
+	if bytes.Equal(rewritten, framed) {
+		t.Fatal("expected gateway user token payload to be rewritten")
+	}
+	if bytes.Contains(rewritten, []byte(clientToken)) {
+		t.Fatal("gateway user token still present after rewrite")
+	}
+	if !bytes.Contains(rewritten, []byte(backendToken)) {
+		t.Fatal("backend token missing after rewrite")
+	}
+}
+
+func TestRewriteJSONAuthPayloadRewritesBasicGatewayCredential(t *testing.T) {
+	backendToken := "sk-ws-01-backend"
+	payload := []byte(`{"apiKey":"Basic ws-abc123-ws-abc123"}`)
+
+	rewritten, err := rewriteUpstreamAuthPayload("application/json", payload, backendToken)
+	if err != nil {
+		t.Fatalf("rewriteUpstreamAuthPayload returned error: %v", err)
+	}
+	if bytes.Equal(rewritten, payload) {
+		t.Fatal("expected basic gateway credential JSON payload to be rewritten")
+	}
+	if bytes.Contains(rewritten, []byte("ws-abc123")) {
+		t.Fatal("gateway user credential still present after rewrite")
+	}
+	if !bytes.Contains(rewritten, []byte(backendToken)) {
+		t.Fatal("backend token missing after JSON rewrite")
+	}
+}
+
 func protoMessage(fields ...[]byte) []byte {
 	var out bytes.Buffer
 	for _, field := range fields {

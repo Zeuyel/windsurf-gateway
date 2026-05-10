@@ -19,6 +19,16 @@ func TestExtractGatewayUserToken(t *testing.T) {
 			want:   "ws-abc123",
 		},
 		{
+			name:   "gateway basic token",
+			header: "Basic ws-abc123",
+			want:   "ws-abc123",
+		},
+		{
+			name:   "gateway duplicated basic token",
+			header: "Basic ws-abc123-ws-abc123",
+			want:   "ws-abc123",
+		},
+		{
 			name:   "bearer upstream token is ignored",
 			header: "Bearer sk-ws-01-backend-token",
 			want:   "",

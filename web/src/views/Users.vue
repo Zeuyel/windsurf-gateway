@@ -29,8 +29,9 @@
 
     <el-card class="table-card">
       <div class="table-tip">
-        <strong>配额说明：</strong>
-        普通用户默认受 Windsurf Credit 池限制，不再按“最大请求数”限额。打开“无限模式”后，该用户会绕过 Gateway 的 Windsurf Credit 约束，只要后端 token 还能被调度就可继续使用。
+        <strong>调度说明：</strong>
+        这里控制的是“这个用户请求到来时，Gateway 挑哪类 Backend Token”，不是给该用户单独记一套个人日限额或周限额。
+        默认只会挑选仍有 Windsurf 日/周额度的 Token；开启忽略额度检查后，会放宽这层筛选。
       </div>
 
       <el-table :data="users" stripe v-loading="loading" style="width: 100%">
@@ -59,7 +60,7 @@
         <el-table-column label="接入策略" min-width="170">
           <template #default="{ row }">
             <el-tag :type="row.unlimited_access ? 'warning' : 'success'" size="small">
-              {{ row.unlimited_access ? '无限模式' : '受 Windsurf Credit 限制' }}
+              {{ row.unlimited_access ? '忽略 Token 额度检查' : '仅走有额度 Token' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -111,6 +112,9 @@
         <el-form-item v-if="!isEditing" label="密码" prop="password">
           <el-input v-model="form.password" type="password" placeholder="请输入密码" show-password />
         </el-form-item>
+        <el-form-item v-else label="重设密码">
+          <el-input v-model="form.password" type="password" placeholder="留空则不修改" show-password />
+        </el-form-item>
         <el-form-item label="角色" prop="role">
           <el-select v-model="form.role" placeholder="请选择角色">
             <el-option label="普通用户" value="user" />
@@ -124,11 +128,15 @@
             <el-option label="封禁" value="banned" />
           </el-select>
         </el-form-item>
-        <el-form-item label="无限模式">
+        <el-form-item label="额度调度">
           <div class="switch-row">
             <el-switch v-model="form.unlimited_access" />
             <span class="switch-copy">
-              {{ form.unlimited_access ? '该用户不受 Gateway 的 Windsurf Credit 约束' : '该用户默认受 Windsurf Credit 池限制' }}
+              {{
+                form.unlimited_access
+                  ? '开启后，请求调度时不再检查 Backend Token 的 Windsurf 日/周额度。'
+                  : '关闭后，只会挑选仍有 Windsurf 日/周额度的 Backend Token。'
+              }}
             </span>
           </div>
         </el-form-item>
@@ -302,6 +310,7 @@ const submitForm = async () => {
       const res = isEditing.value
         ? await client.put(`/users/${editingUserId.value}`, {
             email: payload.email,
+            password: payload.password || undefined,
             role: payload.role,
             status: payload.status,
             unlimited_access: payload.unlimited_access,

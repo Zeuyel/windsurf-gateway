@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ const (
 	gatewayClientIDHeader         = "X-Windsurf-Gateway-Client-Id"
 	legacyGatewayPlaceholderToken = "sk-ws-01-gateway-placeholder"
 )
+
+var gatewayUserTokenPattern = regexp.MustCompile(`ws-[A-Za-z0-9]+`)
 
 func NewProxyHandler(proxySvc *proxy.ProxyService, services *service.Services) *ProxyHandler {
 	return &ProxyHandler{proxy: proxySvc, services: services}
@@ -199,15 +202,27 @@ func extractGatewayUserToken(value string) string {
 		return ""
 	}
 
-	if !strings.HasPrefix(strings.ToLower(value), "bearer ") {
+	lower := strings.ToLower(value)
+	switch {
+	case strings.HasPrefix(lower, "bearer "):
+		return extractGatewayTokenCandidate(value[7:])
+	case strings.HasPrefix(lower, "basic "):
+		return extractGatewayTokenCandidate(value[6:])
+	default:
 		return ""
 	}
+}
 
-	token := strings.TrimSpace(value[7:])
-	if !strings.HasPrefix(strings.ToLower(token), "ws-") {
+func extractGatewayTokenCandidate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return ""
 	}
-	return token
+	if !strings.HasPrefix(strings.ToLower(value), "ws-") {
+		return ""
+	}
+	match := gatewayUserTokenPattern.FindString(value)
+	return strings.TrimSpace(match)
 }
 
 func buildAssignmentKey(c *gin.Context, user *database.User) string {

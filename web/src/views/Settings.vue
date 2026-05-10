@@ -172,7 +172,7 @@
 
                     <div class="info-panel compact-panel">
                       <strong>建议搭配方式</strong>
-                      <p>打开该开关后，patcher 应选择“网关用户令牌”模式，让不同用户拿各自的 <code>ws-...</code> 令牌接入。这样管理员可以单独禁用用户、切换无限模式，并利用 Windsurf credit 池做统一调度。</p>
+                      <p>打开该开关后，patcher 应选择“网关用户令牌”模式，让不同用户拿各自的 <code>ws-...</code> 令牌接入。这样管理员可以单独禁用用户、切换额度调度策略，并利用 Windsurf 配额池做统一调度。</p>
                     </div>
 
                     <div class="gateway-actions">
@@ -293,19 +293,19 @@ const tokenStatusType = computed(() => {
   }
 })
 
-const accessModeLabel = computed(() => (authStore.user?.unlimited_access ? '无限模式' : '受 Windsurf Credit 限制'))
+const accessModeLabel = computed(() => (authStore.user?.unlimited_access ? '忽略 Token 额度检查' : '仅走有额度 Token'))
 const rateLimitLabel = computed(() => `${authStore.user?.rate_limit_per_minute || 30} 次/分钟`)
 const usageModeHint = computed(() => {
   if (authStore.user?.unlimited_access) {
-    return '该用户不会因为 Gateway 的 Windsurf credit 约束被拦截，但仍取决于当前可调度的 Backend Token。'
+    return '该用户调度时不会检查 Backend Token 的 Windsurf 日/周额度，但仍取决于 Token 是否可用、是否失效或是否处于冷却中。'
   }
-  return '该用户会优先使用仍有 Windsurf 日/周 credit 的 Backend Token。'
+  return '该用户只会被分配到仍有 Windsurf 日/周额度的 Backend Token。'
 })
 const usageAlertTitle = computed(() => {
   if (authStore.user?.unlimited_access) {
-    return '无限模式只绕过 Gateway 的 Windsurf credit 策略，不会绕过每分钟限速，也不会绕过后端 token 自身失效或冷却。'
+    return '这里控制的是 Token 调度策略，不是你的个人 credit 账本。忽略额度检查也不会绕过每分钟限速，更不会绕过后端 Token 自身失效或冷却。'
   }
-  return '当前模式下，Gateway 会优先挑选仍有 Windsurf 日限额和周限额的 Backend Token。'
+  return '当前模式下，Gateway 只会挑选仍有 Windsurf 日限额和周限额的 Backend Token。'
 })
 const gatewayAuthHint = computed(() => {
   if (gatewayConfig.require_user_auth_proxy) {

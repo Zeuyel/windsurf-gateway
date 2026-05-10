@@ -142,6 +142,28 @@ func (h *TokenHandler) Stats(c *gin.Context) {
 	Success(c, stats)
 }
 
+func (h *TokenHandler) SyncQuota(c *gin.Context) {
+	token, err := h.svc.SyncQuotaSnapshot(c.Param("id"))
+	if err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
+	Success(c, token)
+}
+
+func (h *TokenHandler) SyncAllQuota(c *gin.Context) {
+	success, failed, messages, err := h.svc.SyncAllQuotaSnapshots()
+	if err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
+	Success(c, gin.H{
+		"success":  success,
+		"failed":   failed,
+		"messages": messages,
+	})
+}
+
 func (h *TokenHandler) BatchImport(c *gin.Context) {
 	var req struct {
 		Tokens []service.TokenCreateRequest `json:"tokens" binding:"required"`

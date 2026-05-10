@@ -149,6 +149,7 @@ func (h *UserAuthHandler) AdminUpdateUser(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		Email              string `json:"email"`
+		Password           string `json:"password"`
 		Role               string `json:"role"`
 		Status             string `json:"status"`
 		UnlimitedAccess    *bool  `json:"unlimited_access"`
@@ -159,6 +160,12 @@ func (h *UserAuthHandler) AdminUpdateUser(c *gin.Context) {
 		return
 	}
 	uid := parseUint(id)
+	if req.Password != "" {
+		if err := h.svc.SetPasswordByAdmin(uid, req.Password); err != nil {
+			Error(c, 400, err.Error())
+			return
+		}
+	}
 	updates := map[string]interface{}{}
 	if req.Email != "" {
 		updates["email"] = req.Email
@@ -176,6 +183,10 @@ func (h *UserAuthHandler) AdminUpdateUser(c *gin.Context) {
 		updates["rate_limit_per_minute"] = *req.RateLimitPerMinute
 	}
 	if len(updates) == 0 {
+		if req.Password != "" {
+			Success(c, nil)
+			return
+		}
 		Error(c, 400, "no changes submitted")
 		return
 	}

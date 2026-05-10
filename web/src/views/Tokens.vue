@@ -15,11 +15,17 @@
         <div class="panel-header">
           <span>Backend Token 池</span>
           <div class="header-actions">
+            <el-button :loading="syncingAllQuota" @click="syncAllQuota">同步全部额度</el-button>
             <el-button @click="openSmartDialog">Smart Login 导入</el-button>
             <el-button type="primary" @click="openCreateDialog">添加 Token</el-button>
           </div>
         </div>
       </template>
+
+      <div class="sync-tip">
+        Backend Token 的 Windsurf 配额会在客户端命中 `GetUserStatus` 时被动刷新。
+        如果某个账号刚导入、长时间未登录，或者你想立即核对日/周额度，可以手动触发同步。
+      </div>
 
       <el-form :inline="true" :model="filters" class="filters">
         <el-form-item label="状态">
@@ -69,7 +75,10 @@
             <div class="quota-cell">
               <div class="quota-plan">{{ row.plan_name || '未同步 Windsurf 配额' }}</div>
               <div v-for="line in quotaCreditLines(row)" :key="line" class="quota-sub">{{ line }}</div>
-              <div class="quota-meta">同步时间 {{ formatTime(row.quota_updated_at) }}</div>
+              <div class="quota-meta">
+                同步时间 {{ formatTime(row.quota_updated_at) }}
+                <span v-if="!row.quota_updated_at">，正常登录时会被动同步，也可点右侧操作主动拉取</span>
+              </div>
             </div>
           </template>
         </el-table-column>
@@ -98,21 +107,28 @@
         <el-table-column prop="last_used_at" label="最近使用" min-width="170">
           <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="300">
+        <el-table-column label="操作" fixed="right" width="132">
           <template #default="{ row }">
-            <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
-            <el-button size="small" type="warning" @click="toggleStatus(row)">
-              {{ row.status === 'active' ? '禁用' : '启用' }}
-            </el-button>
-            <el-button
-              v-if="row.pool_status === 'cooldown'"
-              size="small"
-              type="success"
-              @click="unlockCooldown(row)"
-            >
-              解除冷却
-            </el-button>
-            <el-button size="small" type="danger" @click="deleteToken(row)">删除</el-button>
+            <div class="row-actions">
+              <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
+              <el-dropdown @command="(command) => handleRowCommand(row, command)">
+                <el-button size="small" :loading="syncingTokenId === row.id">
+                  操作
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="sync">同步额度</el-dropdown-item>
+                    <el-dropdown-item command="toggle-status">
+                      {{ row.status === 'active' ? '禁用' : '启用' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item v-if="row.pool_status === 'cooldown'" command="unlock">
+                      解除冷却
+                    </el-dropdown-item>
+                    <el-dropdown-item command="delete">删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -130,15 +146,15 @@
       </div>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '添加 Token' : '编辑 Token'" width="680px">
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '添加 Token' : '编辑 Token'" width="720px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
         <el-row :gutter="16">
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="名称" prop="name">
               <el-input v-model="form.name" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="租户地址" prop="tenant_address">
               <el-input v-model="form.tenant_address" />
             </el-form-item>
@@ -153,22 +169,22 @@
               <el-input v-model="form.description" type="textarea" :rows="2" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="24">
             <el-form-item label="Proxy URL">
               <el-input v-model="form.proxy_url" placeholder="可选" />
             </el-form-item>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="权重">
               <el-input-number v-model="form.weight" :min="1" :max="100" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="6">
-            <el-form-item label="手动请求上限">
+          <el-col :xs="24" :sm="12">
+            <el-form-item label="手动上限">
               <el-input-number v-model="form.max_requests" :min="0" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="过期时间">
               <el-date-picker
                 v-model="form.expires_at"
@@ -198,12 +214,12 @@
           class="smart-alert"
         />
         <el-row :gutter="16">
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="邮箱" prop="email">
               <el-input v-model="smartForm.email" autocomplete="username" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="密码" prop="password">
               <el-input v-model="smartForm.password" type="password" show-password autocomplete="current-password" />
             </el-form-item>
@@ -220,22 +236,22 @@
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="名称">
               <el-input v-model="smartForm.name" placeholder="默认用邮箱生成" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="权重">
               <el-input-number v-model="smartForm.weight" :min="1" :max="100" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-            <el-form-item label="手动请求上限">
+          <el-col :xs="24" :sm="12">
+            <el-form-item label="手动上限">
               <el-input-number v-model="smartForm.max_requests" :min="0" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="Proxy URL">
               <el-input v-model="smartForm.proxy_url" placeholder="可选" />
             </el-form-item>
@@ -269,6 +285,8 @@ const editingId = ref('')
 const formRef = ref(null)
 const smartDialogVisible = ref(false)
 const smartSubmitting = ref(false)
+const syncingAllQuota = ref(false)
+const syncingTokenId = ref('')
 const smartFormRef = ref(null)
 const smartOrgOptions = ref([])
 const smartHint = ref('')
@@ -375,6 +393,42 @@ const loadTokens = async () => {
 
 const loadAll = async () => {
   await Promise.all([loadTokenStats(), loadTokens()])
+}
+
+const syncQuota = async (row) => {
+  syncingTokenId.value = row.id
+  try {
+    const res = await client.post(`/tokens/${row.id}/sync-quota`)
+    if (res.data.code === 200) {
+      ElMessage.success('额度已同步')
+      await loadAll()
+    } else {
+      ElMessage.error(res.data.msg || '同步额度失败')
+    }
+  } catch (error) {
+    ElMessage.error('同步额度失败')
+  } finally {
+    syncingTokenId.value = ''
+  }
+}
+
+const syncAllQuota = async () => {
+  syncingAllQuota.value = true
+  try {
+    const res = await client.post('/tokens/sync-quota')
+    if (res.data.code === 200) {
+      const success = res.data.data?.success || 0
+      const failed = res.data.data?.failed || 0
+      ElMessage.success(`额度同步完成：成功 ${success}，失败 ${failed}`)
+      await loadAll()
+    } else {
+      ElMessage.error(res.data.msg || '批量同步额度失败')
+    }
+  } catch (error) {
+    ElMessage.error('批量同步额度失败')
+  } finally {
+    syncingAllQuota.value = false
+  }
 }
 
 const resetFilters = async () => {
@@ -556,6 +610,23 @@ const unlockCooldown = async (row) => {
   }
 }
 
+const handleRowCommand = async (row, command) => {
+  switch (command) {
+    case 'sync':
+      await syncQuota(row)
+      break
+    case 'toggle-status':
+      await toggleStatus(row)
+      break
+    case 'unlock':
+      await unlockCooldown(row)
+      break
+    case 'delete':
+      await deleteToken(row)
+      break
+  }
+}
+
 const maskToken = (value) => {
   if (!value) return ''
   if (value.length <= 12) return value
@@ -647,7 +718,18 @@ onMounted(loadAll)
 
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
+}
+
+.sync-tip {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #dbe6ff;
+  background: #f5f8ff;
+  color: #52637a;
+  line-height: 1.65;
 }
 
 .filters {
@@ -685,6 +767,12 @@ code {
 .quota-meta {
   color: #8a9aad;
   font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .smart-alert {

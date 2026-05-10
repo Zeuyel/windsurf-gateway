@@ -295,10 +295,22 @@ func looksLikeUpstreamToken(value string) bool {
 		return false
 	}
 
+	lower := strings.ToLower(value)
 	switch {
-	case strings.HasPrefix(value, "sk-ws-01-"):
+	case strings.HasPrefix(lower, "basic "):
+		value = strings.TrimSpace(value[6:])
+		lower = strings.ToLower(value)
+	case strings.HasPrefix(lower, "bearer "):
+		value = strings.TrimSpace(value[7:])
+		lower = strings.ToLower(value)
+	}
+
+	switch {
+	case strings.HasPrefix(lower, "ws-"):
 		return true
-	case strings.HasPrefix(value, "devin-session-token$"):
+	case strings.HasPrefix(lower, "sk-ws-01-"):
+		return true
+	case strings.HasPrefix(lower, "devin-session-token$"):
 		return true
 	case strings.Contains(value, "mocked-for-gateway"):
 		return true

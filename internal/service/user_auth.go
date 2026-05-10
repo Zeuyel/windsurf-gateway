@@ -277,6 +277,24 @@ func (s *UserAuthService) ChangePassword(userID uint, oldPassword, newPassword s
 	return s.db.Model(&user).Update("password", string(hashed)).Error
 }
 
+func (s *UserAuthService) SetPasswordByAdmin(userID uint, newPassword string) error {
+	if len(newPassword) < s.passwordMinLength || len(newPassword) > s.passwordMaxLength {
+		return fmt.Errorf("password must be %d-%d characters", s.passwordMinLength, s.passwordMaxLength)
+	}
+
+	var user database.User
+	if err := s.db.First(&user, userID).Error; err != nil {
+		return err
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	return s.db.Model(&user).Update("password", string(hashed)).Error
+}
+
 func (s *UserAuthService) GetUserByToken(apiToken string) (*database.User, error) {
 	var user database.User
 	if err := s.db.Where("api_token = ?", apiToken).First(&user).Error; err != nil {
