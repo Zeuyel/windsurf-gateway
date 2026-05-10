@@ -48,41 +48,51 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 
 	authHeader := c.GetHeader("Authorization")
 	apiKeyHeader := c.GetHeader("X-Api-Key")
+	requestPath := buildRequestPath(c)
+	requireGatewayUserAuth := shouldRequireGatewayUserAuthForPath(requestPath)
 	userToken, authSource := h.resolveGatewayUserToken(c, authHeader, apiKeyHeader, body)
-	if userToken == "" {
+
+	var user *database.User
+	var err error
+	if userToken != "" {
+		user, err = h.services.UserAuth.GetUserByToken(userToken)
+		if err != nil {
+			if authSource == "binding" {
+				h.clearGatewayClientBinding(c)
+			}
+			if requireGatewayUserAuth {
+				logGatewayAuthFailure(c, requestID, "unknown_user_token", authHeader, apiKeyHeader, userToken)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user token"})
+				return
+			}
+			user = nil
+		}
+	}
+	if requireGatewayUserAuth && user == nil {
 		logGatewayAuthFailure(c, requestID, "missing_or_unextractable_user_token", authHeader, apiKeyHeader, "")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "gateway user token required"})
 		return
 	}
-
-	var user *database.User
-	var err error
-	user, err = h.services.UserAuth.GetUserByToken(userToken)
-	if err != nil {
-		if authSource == "binding" {
-			h.clearGatewayClientBinding(c)
+	if user != nil {
+		h.rememberGatewayClientBinding(c, userToken)
+		logGatewayAuthResolution(c, requestID, authSource, userToken)
+	}
+	if requireGatewayUserAuth {
+		if !user.CanMakeRequest() {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded or account disabled"})
+			return
 		}
-		logGatewayAuthFailure(c, requestID, "unknown_user_token", authHeader, apiKeyHeader, userToken)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user token"})
-		return
-	}
-	h.rememberGatewayClientBinding(c, userToken)
-	logGatewayAuthResolution(c, requestID, authSource, userToken)
-	if !user.CanMakeRequest() {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded or account disabled"})
-		return
-	}
-	rateLimitKey := "ratelimit:user:" + strconv.FormatUint(uint64(user.ID), 10)
-	allowed, remaining, rateErr := h.services.Cache.GetRateLimit(rateLimitKey, user.RateLimitPerMinute, time.Minute)
-	if rateErr != nil || !allowed {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "remaining": remaining})
-		return
+		rateLimitKey := "ratelimit:user:" + strconv.FormatUint(uint64(user.ID), 10)
+		allowed, remaining, rateErr := h.services.Cache.GetRateLimit(rateLimitKey, user.RateLimitPerMinute, time.Minute)
+		if rateErr != nil || !allowed {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "remaining": remaining})
+			return
+		}
 	}
 
-	requestPath := buildRequestPath(c)
 	assignmentKey := buildAssignmentKey(c, user)
 	selectionPolicy := service.TokenSelectionPolicy{
-		RequireWindsurfQuota: !user.UnlimitedAccess && shouldRequireWindsurfQuotaForPath(requestPath),
+		RequireWindsurfQuota: user != nil && !user.UnlimitedAccess && shouldRequireWindsurfQuotaForPath(requestPath),
 	}
 	backendToken, err := h.services.LoadBalancer.SelectTokenForAssignmentWithPolicy(c.Request.Context(), assignmentKey, selectionPolicy)
 	if err != nil {
@@ -163,7 +173,7 @@ func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *da
 		}()
 	}
 
-	if user != nil {
+	if user != nil && shouldRequireGatewayUserAuthForPath(requestPath) {
 		user.IncrementUsage()
 		if err := h.services.UserAuth.UpdateUser(user.ID, map[string]interface{}{"used_requests": user.UsedRequests}); err != nil {
 			logger.Warnf("Failed to update user %d usage: %v", user.ID, err)
@@ -348,31 +358,16 @@ func buildGatewayClientBindingKeys(c *gin.Context) []string {
 }
 
 func shouldRequireWindsurfQuotaForPath(requestPath string) bool {
-	path := stripQuery(requestPath)
+	return shouldRequireGatewayUserAuthForPath(requestPath)
+}
 
-	switch path {
-	case "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
-		"/exa.api_server_pb.ApiServerService/Ping",
-		"/exa.api_server_pb.ApiServerService/GetStatus",
-		"/exa.api_server_pb.ApiServerService/GetModelStatuses",
-		"/exa.api_server_pb.ApiServerService/GetCliModelConfigs",
-		"/exa.api_server_pb.ApiServerService/GetCommandModelConfigs",
-		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
-		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries",
-		"/exa.auth_pb.AuthService/GetUserJwt",
-		"/exa.seat_management_pb.SeatManagementService/GetProfileData",
-		"/exa.seat_management_pb.SeatManagementService/GetCliTeamSettings",
-		"/exa.seat_management_pb.SeatManagementService/MigrateApiKey":
-		return false
-	}
-
-	switch {
-	case strings.HasPrefix(path, "/exa.product_analytics_pb."),
-		strings.HasPrefix(path, "/exa.analytics_pb."),
-		strings.HasPrefix(path, "/exa.api_server_pb.ApiServerService/Record"):
-		return false
-	default:
+// Only billable model-generation endpoints should require gateway user auth.
+func shouldRequireGatewayUserAuthForPath(requestPath string) bool {
+	switch stripQuery(requestPath) {
+	case "/exa.api_server_pb.ApiServerService/GetChatMessage":
 		return true
+	default:
+		return false
 	}
 }
 

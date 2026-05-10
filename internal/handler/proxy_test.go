@@ -124,8 +124,8 @@ func TestShouldRequireWindsurfQuotaForPath(t *testing.T) {
 		{path: "/exa.product_analytics_pb.ProductAnalyticsService/RecordAnalyticsEvent", want: false},
 		{path: "/exa.analytics_pb.AnalyticsService/RecordCortexTrajectoryStep", want: false},
 		{path: "/exa.api_server_pb.ApiServerService/RecordAsyncTelemetry", want: false},
-		{path: "/exa.api_server_pb.ApiServerService/CheckChatCapacity", want: true},
-		{path: "/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit", want: true},
+		{path: "/exa.api_server_pb.ApiServerService/CheckChatCapacity", want: false},
+		{path: "/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit", want: false},
 		{path: "/exa.api_server_pb.ApiServerService/GetChatMessage", want: true},
 	}
 
@@ -133,6 +133,27 @@ func TestShouldRequireWindsurfQuotaForPath(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			if got := shouldRequireWindsurfQuotaForPath(tc.path); got != tc.want {
 				t.Fatalf("shouldRequireWindsurfQuotaForPath(%q) = %t, want %t", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldRequireGatewayUserAuthForPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/exa.api_server_pb.ApiServerService/Ping", want: false},
+		{path: "/exa.api_server_pb.ApiServerService/GetStatus", want: false},
+		{path: "/exa.api_server_pb.ApiServerService/CheckChatCapacity", want: false},
+		{path: "/exa.product_analytics_pb.ProductAnalyticsService/RecordAnalyticsEvent", want: false},
+		{path: "/exa.api_server_pb.ApiServerService/GetChatMessage", want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			if got := shouldRequireGatewayUserAuthForPath(tc.path); got != tc.want {
+				t.Fatalf("shouldRequireGatewayUserAuthForPath(%q) = %t, want %t", tc.path, got, tc.want)
 			}
 		})
 	}
