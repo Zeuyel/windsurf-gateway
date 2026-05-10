@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -17,11 +16,9 @@ import (
 
 const (
 	quotaSyncRequestPath       = "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
-	quotaSyncConnectProtoType  = "application/connect+proto"
+	quotaSyncProtoType         = "application/proto"
 	quotaSyncRequestTimeout    = 30 * time.Second
-	quotaSyncDefaultOrigin     = "https://windsurf.com"
-	quotaSyncDefaultReferer    = "https://windsurf.com/"
-	quotaSyncGatewayUserAgent  = "WindsurfGateway/QuotaSync"
+	quotaSyncGatewayUserAgent  = "connect-go/1.18.1 (go1.26.1)"
 	quotaSyncGatewayIDEName    = "windsurf"
 	quotaSyncGatewayExtName    = "windsurf-gateway"
 	quotaSyncGatewayExtVer     = "quota-sync"
@@ -95,14 +92,12 @@ func (s *TokenService) fetchUserStatusSnapshot(token *database.Token) (http.Head
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Content-Type", quotaSyncConnectProtoType)
-		req.Header.Set("Accept", quotaSyncConnectProtoType)
-		req.Header.Set("Connect-Protocol-Version", "1")
+		req.Header.Set("Content-Type", quotaSyncProtoType)
 		req.Header.Set("Accept-Encoding", "gzip")
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 		req.Header.Set("X-Api-Key", token.Token)
-		applyHeaders(req.Header, defaultBrowserHeaders(quotaSyncDefaultOrigin, quotaSyncDefaultReferer))
 		req.Header.Set("User-Agent", quotaSyncGatewayUserAgent)
+		req.Header.Set("X-Request-Session-Id", buildQuotaSyncStableComponent("session", token))
 		return req, nil
 	})
 	if err != nil {
@@ -169,7 +164,7 @@ func newTokenQuotaHTTPClient(token *database.Token, timeout time.Duration) (*htt
 func buildQuotaSyncUserStatusBody(token *database.Token) []byte {
 	request := make([]byte, 0, 256)
 	appendProtoBytesField(&request, topLevelMetadataFieldNumber, buildQuotaSyncMetadata(token))
-	return wrapConnectProtoMessage(request)
+	return request
 }
 
 func buildQuotaSyncMetadata(token *database.Token) []byte {
@@ -188,13 +183,6 @@ func buildQuotaSyncMetadata(token *database.Token) []byte {
 	appendProtoStringField(&metadata, metadataFieldExtensionName, quotaSyncGatewayExtName)
 	appendProtoStringField(&metadata, metadataFieldDeviceFingerprint, buildQuotaSyncStableComponent("device", token))
 	return metadata
-}
-
-func wrapConnectProtoMessage(payload []byte) []byte {
-	framed := make([]byte, 5+len(payload))
-	binary.BigEndian.PutUint32(framed[1:5], uint32(len(payload)))
-	copy(framed[5:], payload)
-	return framed
 }
 
 func buildQuotaSyncStableComponent(kind string, token *database.Token) string {

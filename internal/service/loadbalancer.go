@@ -387,11 +387,14 @@ func summarizeTokenEligibility(tokens []database.Token, now time.Time, policy To
 		}
 
 		parts = append(parts, fmt.Sprintf(
-			"%s(status=%s pool=%s quota_updated=%t daily=%d weekly=%d reasons=%s)",
+			"%s(status=%s pool=%s quota_updated=%t prompt=%d flow=%d flex=%d daily=%d weekly=%d reasons=%s)",
 			token.ID,
 			token.Status,
 			token.PoolStatus,
 			token.QuotaUpdatedAt != nil,
+			token.AvailablePromptCredits,
+			token.AvailableFlowCredits,
+			token.AvailableFlexCredits,
 			token.DailyQuotaRemainingPercent,
 			token.WeeklyQuotaRemainingPercent,
 			strings.Join(reasons, "+"),
