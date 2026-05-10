@@ -178,7 +178,7 @@ node patch.js \
 仓库现在包含两条工作流：
 
 - `.github/workflows/docker-image.yml`
-  - 在 `master` 和 `v*` tag 上构建并推送 Docker 镜像
+  - 在 `docker-v*` tag 上构建并推送 Docker 镜像
 - `.github/workflows/patcher-release.yml`
   - 在 `patcher-v*` tag 上构建 `windows/linux/macos` patcher 二进制并发布 GitHub Release
 - `.github/workflows/ci.yml`
@@ -212,6 +212,15 @@ Repository secrets:
 - `DOCKER_PASSWORD=<github-personal-access-token>`
 
 `patcher-release.yml` 不依赖这些 Docker secrets；它只需要你打一个 `patcher-v*` tag。
+
+Docker 镜像发布建议打这种 tag：
+
+- `docker-v0.1.0`
+
+这样镜像会发布为：
+
+- `epictus/windsurf-gateway:0.1.0`
+- `epictus/windsurf-gateway:latest`
 
 ## 管理接口
 
