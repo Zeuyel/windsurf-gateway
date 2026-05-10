@@ -1,0 +1,11 @@
+.git
+.agents
+.codex
+.env
+*.log
+windsurf-gateway
+windsurf-patcher
+web/node_modules
+web/dist
+patch-tool/node_modules
+**/windsurf-gateway-backups

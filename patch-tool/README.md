@@ -4,6 +4,8 @@ This tool redirects Windsurf API traffic to a custom Windsurf Gateway. After pat
 
 Each patched Windsurf install also gets a local placeholder API key. The gateway uses that key only for internal sticky routing. It is replaced by the real backend account token before forwarding upstream.
 
+You can also pass an optional gateway user token (`ws-...`). In that mode the patched client sends the `ws-...` token only to your gateway for per-user routing and policy; the gateway still replaces it with the backend token before forwarding upstream.
+
 ## What it patches
 
 Windsurf has a configurable API server setting:
@@ -48,10 +50,22 @@ Full patch:
 node patch.js --gateway=https://your-gateway.example.com --mode=all
 ```
 
+Patch with a gateway user token:
+
+```bash
+node patch.js --gateway=https://your-gateway.example.com --auth-token=ws-xxxxxxxx --mode=all
+```
+
 Environment variables:
 
 ```bash
 WINDSURF_GATEWAY_URL=https://your-gateway.example.com node patch.js --mode=config
+```
+
+```bash
+WINDSURF_GATEWAY_URL=https://your-gateway.example.com \
+WINDSURF_GATEWAY_USER_TOKEN=ws-xxxxxxxx \
+node patch.js --mode=all
 ```
 
 ## Restore
@@ -86,6 +100,7 @@ Default Linux install path:
 
 - `--mode=config` does not require root if your user owns the Windsurf config directory.
 - `--mode=extension` or `--mode=all` may require elevated permissions because `/opt/windsurf` is usually root-owned.
+- Close Windsurf before patching or restoring so `state.vscdb` and `extension.js` are not held open by the app.
 - If Windsurf still shows `Log in to Windsurf` after gateway `Ping` already returns `200`, rerun with `--mode=all` so the bundled extension gets the auth-session fallback patch.
 - If gateway `Ping` returns `200` but the top bar still flips back to `Log in to Windsurf`, rerun with `--mode=all` from the latest repo so the bundled extension also gets the user-status fallback patch.
 - If you patched with an older repo version, rerun `node patch.js --gateway=... --mode=all` once so the legacy shared placeholder key is upgraded to a per-client placeholder key.

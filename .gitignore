@@ -1,6 +1,7 @@
 .env
 *.log
-windsurf-gateway
+/windsurf-gateway
+/windsurf-patcher
 /tmp/
 web/node_modules/
 web/dist/

@@ -106,6 +106,13 @@ function ensurePatchIdentity() {
   return state
 }
 
+function resolveEffectiveGatewayToken(identity, authToken) {
+  if (typeof authToken === 'string' && authToken.trim()) {
+    return authToken.trim()
+  }
+  return identity?.placeholderApiKey || LEGACY_GATEWAY_PLACEHOLDER_API_KEY
+}
+
 function placeholderSummary(value) {
   if (!value) return '(missing)'
   return `${value.slice(0, 18)}...${value.slice(-6)}`
@@ -135,7 +142,7 @@ function buildAuthSessionFallbackBlock(placeholderApiKey) {
   return `??{id:"windsurf-gateway",accessToken:"${placeholderApiKey}",account:{label:"Gateway",id:"windsurf-gateway"},scopes:[]}`
 }
 
-function patchExtension(gateway, registerGateway, identity) {
+function patchExtension(gateway, registerGateway, identity, authToken) {
   if (!fs.existsSync(extensionPath)) {
     console.log(`extension not found: ${extensionPath}`)
     return false
@@ -143,7 +150,7 @@ function patchExtension(gateway, registerGateway, identity) {
   backup(extensionPath)
   let content = fs.readFileSync(extensionPath, 'utf8')
   const before = content
-  const placeholderApiKey = identity?.placeholderApiKey || LEGACY_GATEWAY_PLACEHOLDER_API_KEY
+  const effectiveToken = resolveEffectiveGatewayToken(identity, authToken)
   content = content.replaceAll(`DEFAULT_API_SERVER_URL=\"${DEFAULT_API_URL}\"`, `DEFAULT_API_SERVER_URL=\"${gateway}\"`)
   content = content.replaceAll(`DEFAULT_API_SERVER_URL="${DEFAULT_API_URL}"`, `DEFAULT_API_SERVER_URL="${gateway}"`)
   if (registerGateway) {
@@ -151,10 +158,10 @@ function patchExtension(gateway, registerGateway, identity) {
     content = content.replaceAll(`DEFAULT_REGISTER_API_SERVER_URL="${DEFAULT_REGISTER_URL}"`, `DEFAULT_REGISTER_API_SERVER_URL="${registerGateway}"`)
   }
   if (AUTH_SESSION_FALLBACK_BLOCK_REGEX.test(content)) {
-    content = content.replace(AUTH_SESSION_FALLBACK_BLOCK_REGEX, buildAuthSessionFallbackBlock(placeholderApiKey))
+    content = content.replace(AUTH_SESSION_FALLBACK_BLOCK_REGEX, buildAuthSessionFallbackBlock(effectiveToken))
   } else {
     content = content.replace(AUTH_SESSION_FALLBACK_REGEX, (match) => {
-      return `${match}${buildAuthSessionFallbackBlock(placeholderApiKey)}`
+      return `${match}${buildAuthSessionFallbackBlock(effectiveToken)}`
     })
   }
   if (!content.includes(USER_STATUS_FALLBACK_SENTINEL)) {
@@ -174,11 +181,11 @@ function patchExtension(gateway, registerGateway, identity) {
   }
   fs.writeFileSync(extensionPath, content)
   console.log(`extension patched: ${extensionPath}`)
-  console.log(`extension placeholder key: ${placeholderSummary(placeholderApiKey)}`)
+  console.log(`extension gateway token: ${placeholderSummary(effectiveToken)}`)
   return true
 }
 
-function patchGlobalState(gateway, identity) {
+function patchGlobalState(gateway, identity, authToken) {
   if (!fs.existsSync(globalStatePath)) {
     console.log(`globalState not found: ${globalStatePath}`)
     return false
@@ -202,7 +209,7 @@ function patchGlobalState(gateway, identity) {
   
   // Mock windsurfAuthStatus to skip signup
   const mockAuthStatus = {
-    apiKey: identity?.placeholderApiKey || LEGACY_GATEWAY_PLACEHOLDER_API_KEY,
+    apiKey: resolveEffectiveGatewayToken(identity, authToken),
     allowedCommandModelConfigsProtoBinaryBase64: [],
     userStatusProtoBinaryBase64: ''
   }
@@ -211,7 +218,7 @@ function patchGlobalState(gateway, identity) {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run('windsurfAuthStatus', JSON.stringify(mockAuthStatus))
   console.log('globalState windsurfAuthStatus -> mocked')
-  console.log(`globalState placeholder key: ${placeholderSummary(mockAuthStatus.apiKey)}`)
+  console.log(`globalState gateway token: ${placeholderSummary(mockAuthStatus.apiKey)}`)
   
   // Mock onboarding completion
   db.prepare(`
@@ -314,10 +321,11 @@ function restore() {
 function usage() {
   console.log('Usage:')
   console.log('  node patch.js detect')
-  console.log('  node patch.js --gateway=https://gateway.example.com [--mode=config|extension|all]')
+  console.log('  node patch.js --gateway=https://gateway.example.com [--auth-token=ws-xxxxxxxx] [--mode=config|extension|all]')
   console.log('  node patch.js --restore')
   console.log('Env:')
   console.log('  WINDSURF_GATEWAY_URL=https://gateway.example.com')
+  console.log('  WINDSURF_GATEWAY_USER_TOKEN=ws-xxxxxxxx')
   console.log('  WINDSURF_CONFIG_DIR=/custom/config')
   console.log('  WINDSURF_INSTALL_DIR=/custom/resources/app')
 }
@@ -328,17 +336,19 @@ function main() {
   if (hasArg('--restore') || hasArg('-r')) return restore()
   const gateway = argValue('--gateway') || process.env.WINDSURF_GATEWAY_URL
   const registerGateway = argValue('--register-gateway') || process.env.WINDSURF_REGISTER_GATEWAY_URL
+  const authToken = argValue('--auth-token') || process.env.WINDSURF_GATEWAY_USER_TOKEN
   const mode = argValue('--mode') || 'all'
   if (!gateway) return usage()
   if (!/^https?:\/\//.test(gateway)) throw new Error('gateway must start with http:// or https://')
+  if (authToken && !/^ws-/i.test(authToken)) throw new Error('auth token must start with ws-')
   if (mode === 'config' || mode === 'all') {
     const identity = ensurePatchIdentity()
     patchSettings(gateway, registerGateway, identity)
-    patchGlobalState(gateway, identity)
+    patchGlobalState(gateway, identity, authToken)
   }
   if (mode === 'extension' || mode === 'all') {
     const identity = ensurePatchIdentity()
-    patchExtension(gateway, registerGateway, identity)
+    patchExtension(gateway, registerGateway, identity, authToken)
   }
   console.log('\npatch done. Restart Windsurf.')
 }

@@ -89,6 +89,62 @@ Patch 工具会尝试处理三类位置：
 
 同时会在 `~/.config/Windsurf/User/globalStorage/windsurf-gateway-patch.json` 保存一个本地 placeholder key。这个 key 只用于 gateway 内部把同一台 patched Windsurf 稳定绑定到某个 backend 账号，不会转发给上游服务；真正发往上游的仍然是 backend token 池中的真实 token。
 
+## Patcher Binary
+
+现在仓库里还提供了一个独立的 Go patcher，可直接作为 GitHub Release 二进制发布，不依赖 Node。
+
+本地启动 UI：
+
+```bash
+go run ./cmd/windsurf-patcher
+```
+
+它会启动一个本地网页，用来填写：
+
+- `Gateway Endpoint`
+- 可选 `Gateway User Token`
+- patch 模式
+- 可选自定义 Windsurf 配置目录 / 安装目录
+
+执行 patch / restore 前，先完全退出 Windsurf，避免 `state.vscdb` 或 `extension.js` 被客户端占用。
+
+两种路由模式：
+
+- `Anonymous Sticky`
+  - 不给 gateway 用户 token
+  - patcher 会生成每台客户端独有的 placeholder key
+  - gateway 用它做匿名 sticky 分配
+- `Gateway User Token`
+  - 填 `ws-...` token
+  - Windsurf 请求会先带这个 token 到 gateway
+  - gateway 再按对应用户做分发、额度和速率控制
+
+命令行无界面模式：
+
+```bash
+go run ./cmd/windsurf-patcher -apply --gateway=https://your-gateway.example.com
+```
+
+使用 gateway 用户 token：
+
+```bash
+go run ./cmd/windsurf-patcher -apply \
+  --gateway=https://your-gateway.example.com \
+  --auth-token=ws-xxxxxxxx
+```
+
+检测当前 patch 状态：
+
+```bash
+go run ./cmd/windsurf-patcher -detect
+```
+
+恢复最近一次备份：
+
+```bash
+go run ./cmd/windsurf-patcher -restore
+```
+
 ## 网关请求入口
 
 Windsurf patch 后，客户端的 `codeium.apiServerUrl` 指向 gateway 根地址。Windsurf 原生请求 path 会由 gateway 的 `NoRoute` 兜底接住并转发；同时保留显式入口：
@@ -106,7 +162,56 @@ cd patch-tool
 node patch.js --gateway=https://your-gateway.example.com --mode=all
 ```
 
+Node 版 patch 工具现在也支持可选 `--auth-token=ws-...`：
+
+```bash
+node patch.js \
+  --gateway=https://your-gateway.example.com \
+  --auth-token=ws-xxxxxxxx \
+  --mode=all
+```
+
 这样会把旧的共享 placeholder 升级成“每个 patched 客户端独有”的 placeholder，避免 gateway 只能退回到 `Authorization + IP` 做匿名分配。
+
+## GitHub Actions
+
+仓库现在包含两条工作流：
+
+- `.github/workflows/docker-image.yml`
+  - 在 `master` 和 `v*` tag 上构建并推送 Docker 镜像
+- `.github/workflows/patcher-release.yml`
+  - 在 `patcher-v*` tag 上构建 `windows/linux/macos` patcher 二进制并发布 GitHub Release
+- `.github/workflows/ci.yml`
+  - 在 `master` / PR 上跑 `go test`、后端构建、patcher 构建、web build
+
+推送前需要先在 GitHub 仓库里配置这些变量和 secrets。
+
+Repository variables:
+
+- `DOCKER_REGISTRY`
+  - 例如 `ghcr.io` 或 `docker.io`
+- `DOCKER_IMAGE_NAME`
+  - 会和 registry 拼成 `${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}`
+  - 例如：
+    - `your-org/windsurf-gateway`
+    - `yourname/windsurf-gateway`
+- `DOCKER_PLATFORMS`
+  - 可选
+  - 默认建议：`linux/amd64,linux/arm64`
+
+Repository secrets:
+
+- `DOCKER_USERNAME`
+- `DOCKER_PASSWORD`
+
+如果你要发 Docker 镜像到 GHCR，一般可以这样配：
+
+- `DOCKER_REGISTRY=ghcr.io`
+- `DOCKER_IMAGE_NAME=<github-owner>/windsurf-gateway`
+- `DOCKER_USERNAME=<github-username>`
+- `DOCKER_PASSWORD=<github-personal-access-token>`
+
+`patcher-release.yml` 不依赖这些 Docker secrets；它只需要你打一个 `patcher-v*` tag。
 
 ## 管理接口
 

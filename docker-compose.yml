@@ -46,8 +46,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./web/dist:/app/web/dist
 
 volumes:
   mysql_data:
