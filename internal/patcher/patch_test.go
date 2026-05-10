@@ -15,7 +15,7 @@ func TestPatchExtensionUsesGatewayUserToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	patched, err := patchExtension(path, "https://gateway.example.com", "", "ws-test-user-token")
+	patched, err := patchExtension(path, "https://gateway.example.com", "", "devin-session-token$abcdef1234567890")
 	if err != nil {
 		t.Fatalf("patchExtension returned error: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestPatchExtensionUsesGatewayUserToken(t *testing.T) {
 	if !strings.Contains(got, "https://gateway.example.com") {
 		t.Fatalf("expected patched gateway URL, got: %s", got)
 	}
-	if !strings.Contains(got, `accessToken:"ws-test-user-token"`) {
+	if !strings.Contains(got, `accessToken:"devin-session-token$abcdef1234567890"`) {
 		t.Fatalf("expected custom gateway user token in auth fallback, got: %s", got)
 	}
 	if !strings.Contains(got, userStatusFallbackSentinel) {
@@ -39,7 +39,7 @@ func TestPatchExtensionUsesGatewayUserToken(t *testing.T) {
 	}
 }
 
-func TestApplyAnonymousModeCreatesPerClientPlaceholder(t *testing.T) {
+func TestApplyRequiresGatewayUserToken(t *testing.T) {
 	configDir := filepath.Join(t.TempDir(), "config")
 	installDir := filepath.Join(t.TempDir(), "install")
 	settingsPath := filepath.Join(configDir, "User", "settings.json")
@@ -61,21 +61,19 @@ func TestApplyAnonymousModeCreatesPerClientPlaceholder(t *testing.T) {
 		ConfigDir:  configDir,
 		InstallDir: installDir,
 		GatewayURL: "https://gateway.example.com",
+		AuthToken:  "devin-session-token$abcdef1234567890",
 		Mode:       ModeAll,
 	})
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
-	if result.EffectiveAuthMode != "per-client-placeholder" {
-		t.Fatalf("expected per-client-placeholder mode, got %s", result.EffectiveAuthMode)
-	}
-	if result.Detect.PatchStateMode != "per-client-placeholder" {
-		t.Fatalf("expected detected patch state mode to be per-client-placeholder, got %s", result.Detect.PatchStateMode)
+	if result.EffectiveAuthMode != "gateway-user" {
+		t.Fatalf("expected gateway-user mode, got %s", result.EffectiveAuthMode)
 	}
 	if result.Detect.Settings.GatewayURL != "https://gateway.example.com" {
 		t.Fatalf("expected settings gateway URL to be patched, got %s", result.Detect.Settings.GatewayURL)
 	}
-	if result.Detect.Extension.AuthMode != "per-client-placeholder" {
-		t.Fatalf("expected extension auth mode to use per-client placeholder, got %s", result.Detect.Extension.AuthMode)
+	if result.Detect.Extension.AuthMode != "gateway-user" {
+		t.Fatalf("expected extension auth mode to use gateway-user token, got %s", result.Detect.Extension.AuthMode)
 	}
 }

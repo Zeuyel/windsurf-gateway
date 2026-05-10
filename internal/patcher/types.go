@@ -18,6 +18,7 @@ const (
 	LegacyGatewayPlaceholderAPIKey = "sk-ws-01-gateway-placeholder"
 	GatewayPlaceholderPrefix       = "sk-ws-01-client-"
 	ACPConfigKey                   = "windsurf.acp.enabledAgents"
+	PendingAPIKeyMigrationStateKey = "windsurf.pendingApiKeyMigration"
 	PatchStateRelativePath         = "User/globalStorage/windsurf-gateway-patch.json"
 )
 

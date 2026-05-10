@@ -6,18 +6,30 @@ import (
 	"testing"
 )
 
-func TestRewriteProtoAuthPayloadRewritesNestedValidUTF8Message(t *testing.T) {
-	backendToken := "sk-ws-01-backend"
-	clientToken := "sk-ws-01-client"
+func TestRewriteProtoAuthPayloadRewritesMetadataAndPrivacyFields(t *testing.T) {
+	profile := upstreamAuthProfile{
+		BackendToken:            "sk-ws-01-backend",
+		StableSessionID:         "stable-session",
+		StableUserAgent:         "WindsurfGateway/test",
+		StableDeviceFingerprint: "stable-device",
+	}
+	clientToken := "devin-session-token$abcdef1234567890"
 
 	metadata := protoMessage(
-		protoStringField(1, "windsurf"),
-		protoStringField(2, "1.0.0"),
-		protoStringField(6, clientToken),
+		protoStringField(metadataFieldAPIKey, clientToken),
+		protoStringField(metadataFieldSessionID, "client-session"),
+		protoStringField(metadataFieldSourceAddress, "127.0.0.1"),
+		protoStringField(metadataFieldUserAgent, "connect-go/1.0"),
+		protoStringField(metadataFieldExtensionPath, "/home/user/.windsurf"),
+		protoStringField(metadataFieldUserID, "user-123"),
+		protoStringField(metadataFieldUserJWT, "jwt.jwt.jwt"),
+		protoStringField(metadataFieldForceTeamID, "team-force"),
+		protoStringField(metadataFieldDeviceFingerprint, "client-device"),
+		protoStringField(metadataFieldTeamID, "team-1"),
 	)
 	request := protoMessage(protoBytesField(1, metadata))
 
-	rewritten, err := rewriteProtoAuthPayload(request, backendToken)
+	rewritten, err := rewriteProtoAuthPayload("/exa.seat_management_pb.SeatManagementService/GetUserStatus", request, profile)
 	if err != nil {
 		t.Fatalf("rewriteProtoAuthPayload returned error: %v", err)
 	}
@@ -25,77 +37,83 @@ func TestRewriteProtoAuthPayloadRewritesNestedValidUTF8Message(t *testing.T) {
 	if bytes.Equal(rewritten, request) {
 		t.Fatal("expected protobuf payload to be rewritten")
 	}
-	if bytes.Contains(rewritten, []byte(clientToken)) {
-		t.Fatal("client token still present after rewrite")
+	for _, forbidden := range []string{
+		clientToken,
+		"127.0.0.1",
+		"/home/user/.windsurf",
+		"user-123",
+		"jwt.jwt.jwt",
+		"team-force",
+		"team-1",
+		"client-device",
+	} {
+		if bytes.Contains(rewritten, []byte(forbidden)) {
+			t.Fatalf("unexpected client value still present after rewrite: %s", forbidden)
+		}
 	}
-	if !bytes.Contains(rewritten, []byte(backendToken)) {
-		t.Fatal("backend token missing after rewrite")
+	for _, expected := range []string{
+		profile.BackendToken,
+		profile.StableSessionID,
+		profile.StableUserAgent,
+		profile.StableDeviceFingerprint,
+	} {
+		if !bytes.Contains(rewritten, []byte(expected)) {
+			t.Fatalf("expected rewritten payload to contain %s", expected)
+		}
 	}
 }
 
-func TestRewriteUpstreamAuthPayloadRewritesConnectProtoEnvelope(t *testing.T) {
-	backendToken := "sk-ws-01-backend"
-	clientToken := "sk-ws-01-client"
+func TestRewriteUpstreamAuthPayloadIgnoresUnknownBinaryFieldsOnKnownPath(t *testing.T) {
+	profile := upstreamAuthProfile{
+		BackendToken:            "sk-ws-01-backend",
+		StableSessionID:         "stable-session",
+		StableUserAgent:         "WindsurfGateway/test",
+		StableDeviceFingerprint: "stable-device",
+	}
 
-	message := protoMessage(protoStringField(1, clientToken))
-	framed := connectProtoFrame(0, message)
+	metadata := protoMessage(
+		protoStringField(metadataFieldAPIKey, "devin-session-token$abcdef1234567890"),
+		protoStringField(metadataFieldUserAgent, "client-agent"),
+	)
+	request := protoMessage(
+		protoBytesField(1, metadata),
+		protoBytesField(2, []byte{0x07, 0x01, 0x02, 0x03}),
+	)
+	framed := connectProtoFrame(0, request)
 
-	rewritten, err := rewriteUpstreamAuthPayload("application/connect+proto", framed, backendToken)
+	rewritten, err := rewriteUpstreamAuthPayload("/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates", "application/connect+proto", framed, profile)
 	if err != nil {
 		t.Fatalf("rewriteUpstreamAuthPayload returned error: %v", err)
 	}
-
 	if bytes.Equal(rewritten, framed) {
 		t.Fatal("expected connect proto payload to be rewritten")
 	}
-	if binary.BigEndian.Uint32(rewritten[1:5]) != uint32(len(message)-len(clientToken)+len(backendToken)) {
-		t.Fatal("connect frame length was not updated")
+	if binary.BigEndian.Uint32(rewritten[1:5]) == 0 {
+		t.Fatal("expected non-empty connect frame")
 	}
-	if bytes.Contains(rewritten, []byte(clientToken)) {
-		t.Fatal("client token still present after connect rewrite")
+	if bytes.Contains(rewritten, []byte("client-agent")) {
+		t.Fatal("client user agent should have been rewritten")
 	}
-	if !bytes.Contains(rewritten, []byte(backendToken)) {
-		t.Fatal("backend token missing after connect rewrite")
-	}
-}
-
-func TestRewriteUpstreamAuthPayloadRewritesGatewayUserToken(t *testing.T) {
-	backendToken := "sk-ws-01-backend"
-	clientToken := "ws-abc123"
-
-	message := protoMessage(protoStringField(1, clientToken))
-	framed := connectProtoFrame(0, message)
-
-	rewritten, err := rewriteUpstreamAuthPayload("application/connect+proto", framed, backendToken)
-	if err != nil {
-		t.Fatalf("rewriteUpstreamAuthPayload returned error: %v", err)
-	}
-	if bytes.Equal(rewritten, framed) {
-		t.Fatal("expected gateway user token payload to be rewritten")
-	}
-	if bytes.Contains(rewritten, []byte(clientToken)) {
-		t.Fatal("gateway user token still present after rewrite")
-	}
-	if !bytes.Contains(rewritten, []byte(backendToken)) {
-		t.Fatal("backend token missing after rewrite")
+	if !bytes.Contains(rewritten, []byte(profile.StableUserAgent)) {
+		t.Fatal("stable upstream user agent missing after rewrite")
 	}
 }
 
-func TestRewriteJSONAuthPayloadRewritesBasicGatewayCredential(t *testing.T) {
-	backendToken := "sk-ws-01-backend"
-	payload := []byte(`{"apiKey":"Basic ws-abc123-ws-abc123"}`)
+func TestRewriteUpstreamAuthPayloadRewritesTopLevelAPIKeyJSON(t *testing.T) {
+	profile := upstreamAuthProfile{BackendToken: "sk-ws-01-backend"}
+	payload := []byte(`{"apiKey":"devin-session-token$abcdef1234567890"}`)
 
-	rewritten, err := rewriteUpstreamAuthPayload("application/json", payload, backendToken)
+	rewritten, err := rewriteUpstreamAuthPayload("/exa.seat_management_pb.SeatManagementService/MigrateApiKey", "application/json", payload, profile)
 	if err != nil {
 		t.Fatalf("rewriteUpstreamAuthPayload returned error: %v", err)
 	}
 	if bytes.Equal(rewritten, payload) {
-		t.Fatal("expected basic gateway credential JSON payload to be rewritten")
+		t.Fatal("expected JSON payload to be rewritten")
 	}
-	if bytes.Contains(rewritten, []byte("ws-abc123")) {
-		t.Fatal("gateway user credential still present after rewrite")
+	if bytes.Contains(rewritten, []byte("devin-session-token$abcdef1234567890")) {
+		t.Fatal("gateway user token still present after rewrite")
 	}
-	if !bytes.Contains(rewritten, []byte(backendToken)) {
+	if !bytes.Contains(rewritten, []byte(profile.BackendToken)) {
 		t.Fatal("backend token missing after JSON rewrite")
 	}
 }

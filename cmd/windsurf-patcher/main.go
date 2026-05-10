@@ -33,7 +33,7 @@ func main() {
 		restoreOnly = flag.Bool("restore", false, "restore the latest backup and print JSON")
 		gatewayURL  = flag.String("gateway", "", "gateway endpoint, required with -apply")
 		registerURL = flag.String("register-gateway", "", "optional register gateway endpoint")
-		authToken   = flag.String("auth-token", "", "optional gateway user token starting with ws-")
+		authToken   = flag.String("auth-token", "", "required gateway user token starting with devin-session-token$")
 		mode        = flag.String("mode", string(patcher.ModeAll), "patch mode: config, extension, all")
 		configDir   = flag.String("config-dir", "", "custom Windsurf config directory")
 		installDir  = flag.String("install-dir", "", "custom Windsurf install directory")

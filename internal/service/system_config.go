@@ -46,7 +46,7 @@ func (s *SystemConfigService) Set(key, value string) error {
 func (s *SystemConfigService) EnsureDefaults() error {
 	defaults := map[string]string{
 		"load_balancer_strategy":  "round_robin",
-		"require_user_auth_proxy": "false",
+		"require_user_auth_proxy": "true",
 	}
 
 	for key, value := range defaults {

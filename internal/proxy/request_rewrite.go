@@ -6,37 +6,87 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 )
 
-var rewritableJSONKeys = map[string]struct{}{
-	"apikey":        {},
-	"api_key":       {},
-	"sessiontoken":  {},
-	"session_token": {},
-	"authtoken":     {},
-	"auth_token":    {},
+const (
+	topLevelMetadataField = 1
+	topLevelAPIKeyField   = 1
+
+	metadataFieldAPIKey            = 3
+	metadataFieldSessionID         = 10
+	metadataFieldSourceAddress     = 11
+	metadataFieldUserAgent         = 13
+	metadataFieldExtensionPath     = 17
+	metadataFieldUserID            = 20
+	metadataFieldUserJWT           = 21
+	metadataFieldForceTeamID       = 22
+	metadataFieldDeviceFingerprint = 24
+	metadataFieldTeamID            = 32
+)
+
+type upstreamAuthProfile struct {
+	BackendToken            string
+	StableSessionID         string
+	StableUserAgent         string
+	StableDeviceFingerprint string
 }
 
-func rewriteUpstreamAuthPayload(contentType string, body []byte, backendToken string) ([]byte, error) {
-	if len(body) == 0 || strings.TrimSpace(backendToken) == "" {
+var metadataRewritePaths = map[string]struct{}{
+	"/exa.seat_management_pb.SeatManagementService/GetUserStatus":       {},
+	"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries": {},
+	"/exa.api_server_pb.ApiServerService/GetStatus":                     {},
+	"/exa.api_server_pb.ApiServerService/GetCliModelConfigs":            {},
+	"/exa.api_server_pb.ApiServerService/GetModelStatuses":              {},
+	"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates":   {},
+	"/exa.api_server_pb.ApiServerService/CheckChatCapacity":             {},
+	"/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit":     {},
+	"/exa.api_server_pb.ApiServerService/GetCommandModelConfigs":        {},
+}
+
+var apiKeyRewritePaths = map[string]struct{}{
+	"/exa.seat_management_pb.SeatManagementService/MigrateApiKey":  {},
+	"/exa.seat_management_pb.SeatManagementService/GetProfileData": {},
+}
+
+func rewriteUpstreamAuthPayload(requestPath, contentType string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
+	if len(body) == 0 || strings.TrimSpace(profile.BackendToken) == "" {
+		return body, nil
+	}
+	if !shouldRewriteMetadata(requestPath) && !shouldRewriteAPIKey(requestPath) {
 		return body, nil
 	}
 
 	lowerType := strings.ToLower(contentType)
 	switch {
 	case strings.Contains(lowerType, "application/json"), strings.Contains(lowerType, "application/connect+json"):
-		return rewriteJSONAuthPayload(body, backendToken)
+		return rewriteJSONAuthPayload(requestPath, body, profile)
 	case strings.Contains(lowerType, "application/connect+proto"):
-		return rewriteConnectProtoAuthPayload(body, backendToken)
-	case strings.Contains(lowerType, "application/proto"), strings.Contains(lowerType, "application/protobuf"), strings.Contains(lowerType, "application/connect+proto"):
-		return rewriteProtoAuthPayload(body, backendToken)
+		return rewriteConnectProtoAuthPayload(requestPath, body, profile)
+	case strings.Contains(lowerType, "application/proto"), strings.Contains(lowerType, "application/protobuf"):
+		return rewriteProtoAuthPayload(requestPath, body, profile)
 	default:
 		return body, nil
 	}
 }
 
-func rewriteConnectProtoAuthPayload(body []byte, backendToken string) ([]byte, error) {
+func shouldRewriteMetadata(requestPath string) bool {
+	_, ok := metadataRewritePaths[requestPathWithoutQuery(requestPath)]
+	return ok
+}
+
+func shouldRewriteAPIKey(requestPath string) bool {
+	_, ok := apiKeyRewritePaths[requestPathWithoutQuery(requestPath)]
+	return ok
+}
+
+func requestPathWithoutQuery(path string) string {
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		return path[:idx]
+	}
+	return path
+}
+
+func rewriteConnectProtoAuthPayload(requestPath string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
 	if len(body) == 0 {
 		return body, nil
 	}
@@ -61,7 +111,7 @@ func rewriteConnectProtoAuthPayload(body []byte, backendToken string) ([]byte, e
 		payload := body[frameStart:frameEnd]
 		replacement := payload
 		if flags&0x01 == 0 {
-			rewritten, err := rewriteProtoAuthPayload(payload, backendToken)
+			rewritten, err := rewriteProtoAuthPayload(requestPath, payload, profile)
 			if err != nil {
 				return body, err
 			}
@@ -85,86 +135,127 @@ func rewriteConnectProtoAuthPayload(body []byte, backendToken string) ([]byte, e
 	return out.Bytes(), nil
 }
 
-func rewriteJSONAuthPayload(body []byte, backendToken string) ([]byte, error) {
-	var payload interface{}
+func rewriteProtoAuthPayload(requestPath string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
+	switch {
+	case shouldRewriteMetadata(requestPath):
+		return rewriteTopLevelMetadataField(body, topLevelMetadataField, profile)
+	case shouldRewriteAPIKey(requestPath):
+		return rewriteTopLevelStringField(body, topLevelAPIKeyField, profile.BackendToken)
+	default:
+		return body, nil
+	}
+}
+
+func rewriteJSONAuthPayload(requestPath string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
+	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return body, nil
 	}
 
-	if !rewriteJSONValue(&payload, "", backendToken) {
+	changed := false
+	root, ok := payload.(map[string]any)
+	if !ok {
 		return body, nil
 	}
 
-	rewritten, err := json.Marshal(payload)
+	switch {
+	case shouldRewriteMetadata(requestPath):
+		metadata, ok := root["metadata"].(map[string]any)
+		if !ok {
+			return body, nil
+		}
+		changed = rewriteJSONMetadataObject(metadata, profile)
+		root["metadata"] = metadata
+	case shouldRewriteAPIKey(requestPath):
+		if _, ok := root["apiKey"]; ok {
+			root["apiKey"] = profile.BackendToken
+			changed = true
+		}
+		if _, ok := root["api_key"]; ok {
+			root["api_key"] = profile.BackendToken
+			changed = true
+		}
+	}
+
+	if !changed {
+		return body, nil
+	}
+
+	rewritten, err := json.Marshal(root)
 	if err != nil {
 		return nil, err
 	}
 	return rewritten, nil
 }
 
-func rewriteJSONValue(value *interface{}, parentKey, backendToken string) bool {
-	switch typed := (*value).(type) {
-	case map[string]interface{}:
-		changed := false
-		for key, nested := range typed {
-			next := nested
-			if rewriteJSONValue(&next, key, backendToken) {
-				typed[key] = next
-				changed = true
-			}
-		}
-		return changed
-	case []interface{}:
-		changed := false
-		for idx := range typed {
-			next := typed[idx]
-			if rewriteJSONValue(&next, parentKey, backendToken) {
-				typed[idx] = next
-				changed = true
-			}
-		}
-		return changed
-	case string:
-		if shouldReplaceJSONToken(parentKey, typed) {
-			*value = backendToken
-			return true
+func rewriteJSONMetadataObject(metadata map[string]any, profile upstreamAuthProfile) bool {
+	changed := false
+
+	set := func(key string, value string) {
+		if current, ok := metadata[key].(string); !ok || current != value {
+			metadata[key] = value
+			changed = true
 		}
 	}
-	return false
-}
-
-func shouldReplaceJSONToken(key, value string) bool {
-	key = strings.ToLower(strings.TrimSpace(key))
-	if _, ok := rewritableJSONKeys[key]; ok {
-		return true
+	drop := func(key string) {
+		if _, ok := metadata[key]; ok {
+			delete(metadata, key)
+			changed = true
+		}
 	}
-	return looksLikeUpstreamToken(value)
+
+	set("apiKey", profile.BackendToken)
+	set("sessionId", profile.StableSessionID)
+	set("userAgent", profile.StableUserAgent)
+	set("deviceFingerprint", profile.StableDeviceFingerprint)
+	drop("sourceAddress")
+	drop("extensionPath")
+	drop("userId")
+	drop("userJwt")
+	drop("forceTeamId")
+	drop("teamId")
+
+	return changed
 }
 
-func rewriteProtoAuthPayload(body []byte, backendToken string) ([]byte, error) {
-	rewritten, changed, err := rewriteProtoMessage(body, backendToken)
+func rewriteTopLevelMetadataField(data []byte, targetField int, profile upstreamAuthProfile) ([]byte, error) {
+	rewritten, changed, err := rewriteLengthDelimitedField(data, targetField, func(payload []byte) ([]byte, bool, error) {
+		return rewriteMetadataMessage(payload, profile)
+	})
 	if err != nil || !changed {
-		return body, err
+		return data, err
 	}
 	return rewritten, nil
 }
 
-func rewriteProtoMessage(data []byte, backendToken string) ([]byte, bool, error) {
+func rewriteTopLevelStringField(data []byte, targetField int, replacement string) ([]byte, error) {
+	rewritten, changed, err := rewriteLengthDelimitedField(data, targetField, func(payload []byte) ([]byte, bool, error) {
+		if string(payload) == replacement {
+			return payload, false, nil
+		}
+		return []byte(replacement), true, nil
+	})
+	if err != nil || !changed {
+		return data, err
+	}
+	return rewritten, nil
+}
+
+func rewriteLengthDelimitedField(data []byte, targetField int, rewrite func([]byte) ([]byte, bool, error)) ([]byte, bool, error) {
 	var out bytes.Buffer
 	changed := false
 	idx := 0
 
 	for idx < len(data) {
-		tagStart := idx
+		fieldStart := idx
 		tag, tagWidth, ok := decodeVarintBytes(data[idx:])
 		if !ok {
 			return nil, false, fmt.Errorf("decode proto tag failed")
 		}
 		idx += tagWidth
+
 		fieldNumber := int(tag >> 3)
 		wireType := int(tag & 0x7)
-
-		out.Write(data[tagStart:idx])
 
 		switch wireType {
 		case 0:
@@ -172,13 +263,13 @@ func rewriteProtoMessage(data []byte, backendToken string) ([]byte, bool, error)
 			if !ok {
 				return nil, false, fmt.Errorf("decode proto varint field %d failed", fieldNumber)
 			}
-			out.Write(data[idx : idx+valueWidth])
+			out.Write(data[fieldStart : idx+valueWidth])
 			idx += valueWidth
 		case 1:
 			if idx+8 > len(data) {
 				return nil, false, fmt.Errorf("decode proto fixed64 field %d overflow", fieldNumber)
 			}
-			out.Write(data[idx : idx+8])
+			out.Write(data[fieldStart : idx+8])
 			idx += 8
 		case 2:
 			length, lengthWidth, ok := decodeVarintBytes(data[idx:])
@@ -192,31 +283,24 @@ func rewriteProtoMessage(data []byte, backendToken string) ([]byte, bool, error)
 			}
 
 			payload := data[idx:end]
-			replacement := payload
-			localChanged := false
-
-			if looksLikeTokenBytes(payload) {
-				replacement = []byte(backendToken)
-				localChanged = true
-			}
-
-			if !localChanged && shouldInspectNestedProto(payload) {
-				nested, nestedChanged, err := rewriteProtoMessage(payload, backendToken)
-				if err == nil && nestedChanged {
-					replacement = nested
-					localChanged = true
+			if fieldNumber == targetField {
+				replacement, localChanged, err := rewrite(payload)
+				if err != nil {
+					return nil, false, err
 				}
+				out.Write(data[fieldStart : fieldStart+tagWidth])
+				writeVarint(&out, uint64(len(replacement)))
+				out.Write(replacement)
+				changed = changed || localChanged
+			} else {
+				out.Write(data[fieldStart:end])
 			}
-
-			writeVarint(&out, uint64(len(replacement)))
-			out.Write(replacement)
-			changed = changed || localChanged
 			idx = end
 		case 5:
 			if idx+4 > len(data) {
 				return nil, false, fmt.Errorf("decode proto fixed32 field %d overflow", fieldNumber)
 			}
-			out.Write(data[idx : idx+4])
+			out.Write(data[fieldStart : idx+4])
 			idx += 4
 		default:
 			return nil, false, fmt.Errorf("unsupported proto wire type %d", wireType)
@@ -226,38 +310,118 @@ func rewriteProtoMessage(data []byte, backendToken string) ([]byte, bool, error)
 	return out.Bytes(), changed, nil
 }
 
-func looksLikeTokenBytes(payload []byte) bool {
-	return utf8.Valid(payload) && looksLikeUpstreamToken(string(payload))
-}
+func rewriteMetadataMessage(data []byte, profile upstreamAuthProfile) ([]byte, bool, error) {
+	var out bytes.Buffer
+	changed := false
+	seen := map[int]bool{}
+	idx := 0
 
-func shouldInspectNestedProto(payload []byte) bool {
-	if len(payload) == 0 {
-		return false
-	}
+	for idx < len(data) {
+		fieldStart := idx
+		tag, tagWidth, ok := decodeVarintBytes(data[idx:])
+		if !ok {
+			return nil, false, fmt.Errorf("decode metadata tag failed")
+		}
+		idx += tagWidth
 
-	tag := payload[0]
-	fieldNumber := int(tag >> 3)
-	wireType := int(tag & 0x7)
-	if fieldNumber == 0 {
-		return false
-	}
-	switch wireType {
-	case 0, 1, 2, 5:
-	default:
-		return false
-	}
+		fieldNumber := int(tag >> 3)
+		wireType := int(tag & 0x7)
+		if fieldNumber == metadataFieldAPIKey || fieldNumber == metadataFieldSessionID || fieldNumber == metadataFieldUserAgent || fieldNumber == metadataFieldDeviceFingerprint {
+			seen[fieldNumber] = true
+		}
 
-	if !utf8.Valid(payload) {
-		return true
-	}
+		switch wireType {
+		case 0:
+			valueWidth, ok := skipVarintBytes(data[idx:])
+			if !ok {
+				return nil, false, fmt.Errorf("decode metadata varint field %d failed", fieldNumber)
+			}
+			out.Write(data[fieldStart : idx+valueWidth])
+			idx += valueWidth
+		case 1:
+			if idx+8 > len(data) {
+				return nil, false, fmt.Errorf("decode metadata fixed64 field %d overflow", fieldNumber)
+			}
+			out.Write(data[fieldStart : idx+8])
+			idx += 8
+		case 2:
+			length, lengthWidth, ok := decodeVarintBytes(data[idx:])
+			if !ok {
+				return nil, false, fmt.Errorf("decode metadata length field %d failed", fieldNumber)
+			}
+			idx += lengthWidth
+			end := idx + int(length)
+			if end > len(data) {
+				return nil, false, fmt.Errorf("decode metadata field %d overflow", fieldNumber)
+			}
 
-	for _, b := range payload {
-		if b < 0x20 && b != '\t' && b != '\n' && b != '\r' {
-			return true
+			switch fieldNumber {
+			case metadataFieldAPIKey:
+				writeStringField(&out, fieldNumber, profile.BackendToken)
+				if string(data[idx:end]) != profile.BackendToken {
+					changed = true
+				}
+			case metadataFieldSessionID:
+				writeStringField(&out, fieldNumber, profile.StableSessionID)
+				if string(data[idx:end]) != profile.StableSessionID {
+					changed = true
+				}
+			case metadataFieldUserAgent:
+				writeStringField(&out, fieldNumber, profile.StableUserAgent)
+				if string(data[idx:end]) != profile.StableUserAgent {
+					changed = true
+				}
+			case metadataFieldDeviceFingerprint:
+				writeStringField(&out, fieldNumber, profile.StableDeviceFingerprint)
+				if string(data[idx:end]) != profile.StableDeviceFingerprint {
+					changed = true
+				}
+			case metadataFieldSourceAddress,
+				metadataFieldExtensionPath,
+				metadataFieldUserID,
+				metadataFieldUserJWT,
+				metadataFieldForceTeamID,
+				metadataFieldTeamID:
+				changed = true
+			default:
+				out.Write(data[fieldStart:end])
+			}
+			idx = end
+		case 5:
+			if idx+4 > len(data) {
+				return nil, false, fmt.Errorf("decode metadata fixed32 field %d overflow", fieldNumber)
+			}
+			out.Write(data[fieldStart : idx+4])
+			idx += 4
+		default:
+			return nil, false, fmt.Errorf("unsupported metadata wire type %d", wireType)
 		}
 	}
 
-	return false
+	if !seen[metadataFieldAPIKey] {
+		writeStringField(&out, metadataFieldAPIKey, profile.BackendToken)
+		changed = true
+	}
+	if profile.StableSessionID != "" && !seen[metadataFieldSessionID] {
+		writeStringField(&out, metadataFieldSessionID, profile.StableSessionID)
+		changed = true
+	}
+	if profile.StableUserAgent != "" && !seen[metadataFieldUserAgent] {
+		writeStringField(&out, metadataFieldUserAgent, profile.StableUserAgent)
+		changed = true
+	}
+	if profile.StableDeviceFingerprint != "" && !seen[metadataFieldDeviceFingerprint] {
+		writeStringField(&out, metadataFieldDeviceFingerprint, profile.StableDeviceFingerprint)
+		changed = true
+	}
+
+	return out.Bytes(), changed, nil
+}
+
+func writeStringField(buf *bytes.Buffer, fieldNumber int, value string) {
+	writeVarint(buf, uint64(fieldNumber<<3|2))
+	writeVarint(buf, uint64(len(value)))
+	buf.WriteString(value)
 }
 
 func decodeVarintBytes(data []byte) (uint64, int, bool) {
@@ -287,36 +451,4 @@ func writeVarint(buf *bytes.Buffer, value uint64) {
 		value >>= 7
 	}
 	buf.WriteByte(byte(value))
-}
-
-func looksLikeUpstreamToken(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-
-	lower := strings.ToLower(value)
-	switch {
-	case strings.HasPrefix(lower, "basic "):
-		value = strings.TrimSpace(value[6:])
-		lower = strings.ToLower(value)
-	case strings.HasPrefix(lower, "bearer "):
-		value = strings.TrimSpace(value[7:])
-		lower = strings.ToLower(value)
-	}
-
-	switch {
-	case strings.HasPrefix(lower, "ws-"):
-		return true
-	case strings.HasPrefix(lower, "sk-ws-01-"):
-		return true
-	case strings.HasPrefix(lower, "devin-session-token$"):
-		return true
-	case strings.Contains(value, "mocked-for-gateway"):
-		return true
-	case strings.Count(value, ".") == 2 && len(value) >= 40:
-		return true
-	default:
-		return false
-	}
 }

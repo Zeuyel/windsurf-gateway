@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"windsurf-gateway/internal/database"
+	"windsurf-gateway/internal/gatewayuser"
 	"windsurf-gateway/internal/logger"
 	"windsurf-gateway/internal/proxy"
 	"windsurf-gateway/internal/service"
@@ -31,8 +31,6 @@ const (
 	legacyGatewayPlaceholderToken = "sk-ws-01-gateway-placeholder"
 )
 
-var gatewayUserTokenPattern = regexp.MustCompile(`ws-[A-Za-z0-9]+`)
-
 func NewProxyHandler(proxySvc *proxy.ProxyService, services *service.Services) *ProxyHandler {
 	return &ProxyHandler{proxy: proxySvc, services: services}
 }
@@ -41,36 +39,33 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	requestID := uuid.NewString()
 	c.Writer.Header().Set("X-Request-ID", requestID)
 
-	authRequired := h.services.SystemConfig.GetBool("require_user_auth_proxy", false)
-	userToken := extractGatewayUserToken(c.GetHeader("Authorization"))
-	if authRequired && userToken == "" {
+	userToken := extractGatewayUserToken(c.GetHeader("Authorization"), c.GetHeader("X-Api-Key"))
+	if userToken == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "gateway user token required"})
 		return
 	}
 
 	var user *database.User
 	var err error
-	if userToken != "" {
-		user, err = h.services.UserAuth.GetUserByToken(userToken)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user token"})
-			return
-		}
-		if !user.CanMakeRequest() {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded or account disabled"})
-			return
-		}
-		rateLimitKey := "ratelimit:user:" + strconv.FormatUint(uint64(user.ID), 10)
-		allowed, remaining, rateErr := h.services.Cache.GetRateLimit(rateLimitKey, user.RateLimitPerMinute, time.Minute)
-		if rateErr != nil || !allowed {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "remaining": remaining})
-			return
-		}
+	user, err = h.services.UserAuth.GetUserByToken(userToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user token"})
+		return
+	}
+	if !user.CanMakeRequest() {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded or account disabled"})
+		return
+	}
+	rateLimitKey := "ratelimit:user:" + strconv.FormatUint(uint64(user.ID), 10)
+	allowed, remaining, rateErr := h.services.Cache.GetRateLimit(rateLimitKey, user.RateLimitPerMinute, time.Minute)
+	if rateErr != nil || !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "remaining": remaining})
+		return
 	}
 
 	assignmentKey := buildAssignmentKey(c, user)
 	selectionPolicy := service.TokenSelectionPolicy{
-		RequireWindsurfQuota: user == nil || !user.UnlimitedAccess,
+		RequireWindsurfQuota: !user.UnlimitedAccess,
 	}
 	backendToken, err := h.services.LoadBalancer.SelectTokenForAssignmentWithPolicy(c.Request.Context(), assignmentKey, selectionPolicy)
 	if err != nil {
@@ -196,33 +191,13 @@ func extractBearerToken(value string) string {
 	return value
 }
 
-func extractGatewayUserToken(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
+func extractGatewayUserToken(values ...string) string {
+	for _, value := range values {
+		if token := gatewayuser.Extract(value); token != "" {
+			return token
+		}
 	}
-
-	lower := strings.ToLower(value)
-	switch {
-	case strings.HasPrefix(lower, "bearer "):
-		return extractGatewayTokenCandidate(value[7:])
-	case strings.HasPrefix(lower, "basic "):
-		return extractGatewayTokenCandidate(value[6:])
-	default:
-		return ""
-	}
-}
-
-func extractGatewayTokenCandidate(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if !strings.HasPrefix(strings.ToLower(value), "ws-") {
-		return ""
-	}
-	match := gatewayUserTokenPattern.FindString(value)
-	return strings.TrimSpace(match)
+	return ""
 }
 
 func buildAssignmentKey(c *gin.Context, user *database.User) string {
@@ -362,7 +337,9 @@ func shouldIgnoreAuthCooldown(requestPath string) bool {
 	case "/exa.api_server_pb.ApiServerService/CheckChatCapacity",
 		"/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit",
 		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
-		"/exa.seat_management_pb.SeatManagementService/GetProfileData":
+		"/exa.seat_management_pb.SeatManagementService/GetProfileData",
+		"/exa.seat_management_pb.SeatManagementService/MigrateApiKey",
+		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries":
 		return true
 	default:
 		return false

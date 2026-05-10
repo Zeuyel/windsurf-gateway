@@ -67,7 +67,7 @@
             <el-tab-pane v-if="!authStore.isAdmin" label="网关令牌" name="token">
               <div class="info-panel">
                 <strong>如何使用</strong>
-                <p>如果管理员开启了 Gateway 用户鉴权，请在 patcher 中选择“网关用户令牌”模式，并填入下面这个以 <code>ws-</code> 开头的令牌。</p>
+                <p>请在 patcher 中选择“网关用户令牌”模式，并填入下面这个以 <code>devin-session-token$</code> 开头的令牌。</p>
               </div>
 
               <el-form label-width="110px">
@@ -94,7 +94,7 @@
                 />
                 <div class="info-panel admin-panel">
                   <strong>管理职责</strong>
-                  <p>在这里控制 Gateway 是否要求客户端必须携带 ws 用户令牌；真正的 Windsurf 日限额与周限额由 Backend Token 池同步并调度。</p>
+                  <p>Gateway 现在强制要求客户端携带 <code>devin-session-token$...</code> 用户令牌接入；真正的 Windsurf 日限额与周限额由 Backend Token 池同步并调度。</p>
                 </div>
               </template>
 
@@ -157,10 +157,10 @@
                   <div class="gateway-card">
                     <div class="gateway-head">
                       <div>
-                        <h3>客户端是否必须先鉴权</h3>
-                        <p>开启后，只知道 Gateway 地址不足以使用。客户端必须携带后台创建的 <code>ws-...</code> Gateway 用户令牌。</p>
+                        <h3>客户端鉴权已强制开启</h3>
+                        <p>现在只知道 Gateway 地址已经不足以使用。所有客户端都必须携带后台创建的 <code>devin-session-token$...</code> Gateway 用户令牌。</p>
                       </div>
-                      <el-switch v-model="gatewayConfig.require_user_auth_proxy" />
+                      <el-switch v-model="gatewayConfig.require_user_auth_proxy" disabled />
                     </div>
 
                     <el-alert
@@ -172,11 +172,11 @@
 
                     <div class="info-panel compact-panel">
                       <strong>建议搭配方式</strong>
-                      <p>打开该开关后，patcher 应选择“网关用户令牌”模式，让不同用户拿各自的 <code>ws-...</code> 令牌接入。这样管理员可以单独禁用用户、切换额度调度策略，并利用 Windsurf 配额池做统一调度。</p>
+                      <p>patcher 应选择“网关用户令牌”模式，让不同用户拿各自的 <code>devin-session-token$...</code> 令牌接入。这样管理员可以单独禁用用户、切换额度调度策略，并利用 Windsurf 配额池做统一调度。</p>
                     </div>
 
                     <div class="gateway-actions">
-                      <el-button type="primary" :loading="gatewayConfigSaving" @click="saveGatewayConfig">保存 Gateway 接入规则</el-button>
+                      <el-button type="primary" :loading="gatewayConfigSaving" @click="saveGatewayConfig">写入强制鉴权标记</el-button>
                     </div>
                   </div>
                 </template>
@@ -218,7 +218,7 @@ const passwordForm = reactive({
 })
 
 const gatewayConfig = reactive({
-  require_user_auth_proxy: false,
+  require_user_auth_proxy: true,
 })
 
 const profileRules = {
@@ -308,10 +308,7 @@ const usageAlertTitle = computed(() => {
   return '当前模式下，Gateway 只会挑选仍有 Windsurf 日限额和周限额的 Backend Token。'
 })
 const gatewayAuthHint = computed(() => {
-  if (gatewayConfig.require_user_auth_proxy) {
-    return '已开启：只有携带有效 ws 用户令牌的客户端才能通过 Gateway。'
-  }
-  return '未开启：知道 Gateway 地址的客户端仍可匿名接入。'
+  return '已强制开启：只有携带有效 devin-session-token$ 用户令牌的客户端才能通过 Gateway。'
 })
 
 const loadProfile = () => {
@@ -331,7 +328,8 @@ const loadGatewayConfig = async () => {
     }
     const configs = Array.isArray(res.data.data) ? res.data.data : []
     const requireAuth = configs.find((item) => item.key === 'require_user_auth_proxy')
-    gatewayConfig.require_user_auth_proxy = String(requireAuth?.value || 'false').toLowerCase() === 'true'
+    gatewayConfig.require_user_auth_proxy = String(requireAuth?.value || 'true').toLowerCase() === 'true'
+    gatewayConfig.require_user_auth_proxy = true
   } catch (error) {
     ElMessage.error(error.message || '加载系统配置失败')
   } finally {
@@ -343,10 +341,11 @@ const saveGatewayConfig = async () => {
   gatewayConfigSaving.value = true
   try {
     const res = await client.put('/system-config', {
-      require_user_auth_proxy: String(gatewayConfig.require_user_auth_proxy),
+      require_user_auth_proxy: 'true',
     })
     if (res.data.code === 200) {
-      ElMessage.success('Gateway 接入规则已保存')
+      gatewayConfig.require_user_auth_proxy = true
+      ElMessage.success('已写入强制鉴权标记')
     } else {
       ElMessage.error(res.data.msg || '保存失败')
     }

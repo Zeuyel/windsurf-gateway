@@ -34,20 +34,28 @@ func patchGlobalState(path, gatewayURL, authToken string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
 
+	keys := make([]string, 0, 4)
 	for rows.Next() {
 		var key string
 		var ignored string
 		if err := rows.Scan(&key, &ignored); err != nil {
+			rows.Close()
 			return false, err
 		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for _, key := range keys {
 		if _, err := db.Exec(`UPDATE ItemTable SET value = ? WHERE key = ?`, marshalJSONString(gatewayURL), key); err != nil {
 			return false, err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
 	}
 
 	mockAuthStatus := map[string]any{
@@ -56,6 +64,11 @@ func patchGlobalState(path, gatewayURL, authToken string) (bool, error) {
 		"userStatusProtoBinaryBase64":                 "",
 	}
 	if err := upsertStateValue(db, "windsurfAuthStatus", mockAuthStatus); err != nil {
+		return false, err
+	}
+	// Let Windsurf's native startup migration path replace any stale stored session
+	// token with the injected gateway user token on next launch.
+	if err := upsertStateValue(db, PendingAPIKeyMigrationStateKey, authToken); err != nil {
 		return false, err
 	}
 	if err := upsertStateValue(db, "windsurfOnboarding", true); err != nil {
@@ -121,7 +134,7 @@ func cleanupMockedGlobalState(path string) (int, error) {
 	defer db.Close()
 
 	count := 0
-	for _, key := range []string{"windsurfAuthStatus", "windsurfOnboarding", "windsurfProductEducation"} {
+	for _, key := range []string{"windsurfAuthStatus", PendingAPIKeyMigrationStateKey, "windsurfOnboarding", "windsurfProductEducation"} {
 		result, err := db.Exec(`DELETE FROM ItemTable WHERE key = ?`, key)
 		if err != nil {
 			return count, err

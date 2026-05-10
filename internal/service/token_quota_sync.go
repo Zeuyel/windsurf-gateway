@@ -2,9 +2,13 @@ package service
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 
@@ -12,12 +16,17 @@ import (
 )
 
 const (
-	quotaSyncRequestPath      = "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
-	quotaSyncConnectProtoType = "application/connect+proto"
-	quotaSyncRequestTimeout   = 30 * time.Second
-	quotaSyncDefaultOrigin    = "https://windsurf.com"
-	quotaSyncDefaultReferer   = "https://windsurf.com/"
-	quotaSyncGatewayUserAgent = "WindsurfGateway/QuotaSync"
+	quotaSyncRequestPath       = "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
+	quotaSyncConnectProtoType  = "application/connect+proto"
+	quotaSyncRequestTimeout    = 30 * time.Second
+	quotaSyncDefaultOrigin     = "https://windsurf.com"
+	quotaSyncDefaultReferer    = "https://windsurf.com/"
+	quotaSyncGatewayUserAgent  = "WindsurfGateway/QuotaSync"
+	quotaSyncGatewayIDEName    = "windsurf"
+	quotaSyncGatewayExtName    = "windsurf-gateway"
+	quotaSyncGatewayExtVer     = "quota-sync"
+	quotaSyncGatewayLocale     = "zh-CN"
+	quotaSyncAuthSourceCodeium = 0
 )
 
 func (s *TokenService) SyncQuotaSnapshot(id string) (*database.Token, error) {
@@ -79,8 +88,7 @@ func (s *TokenService) fetchUserStatusSnapshot(token *database.Token) (http.Head
 		return nil, nil, err
 	}
 
-	// Connect protocol empty message frame.
-	body := []byte{0, 0, 0, 0, 0}
+	body := buildQuotaSyncUserStatusBody(token)
 
 	resp, err := doRequestWithRetry(client, 2, func() (*http.Request, error) {
 		req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(body))
@@ -93,8 +101,8 @@ func (s *TokenService) fetchUserStatusSnapshot(token *database.Token) (http.Head
 		req.Header.Set("Accept-Encoding", "gzip")
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 		req.Header.Set("X-Api-Key", token.Token)
-		req.Header.Set("User-Agent", quotaSyncGatewayUserAgent)
 		applyHeaders(req.Header, defaultBrowserHeaders(quotaSyncDefaultOrigin, quotaSyncDefaultReferer))
+		req.Header.Set("User-Agent", quotaSyncGatewayUserAgent)
 		return req, nil
 	})
 	if err != nil {
@@ -157,3 +165,64 @@ func newTokenQuotaHTTPClient(token *database.Token, timeout time.Duration) (*htt
 	transport.Proxy = http.ProxyURL(proxyURL)
 	return client, nil
 }
+
+func buildQuotaSyncUserStatusBody(token *database.Token) []byte {
+	request := make([]byte, 0, 256)
+	appendProtoBytesField(&request, topLevelMetadataFieldNumber, buildQuotaSyncMetadata(token))
+	return wrapConnectProtoMessage(request)
+}
+
+func buildQuotaSyncMetadata(token *database.Token) []byte {
+	metadata := make([]byte, 0, 256)
+	appendProtoStringField(&metadata, metadataFieldIDEName, quotaSyncGatewayIDEName)
+	appendProtoStringField(&metadata, metadataFieldExtensionVersion, quotaSyncGatewayExtVer)
+	appendProtoStringField(&metadata, metadataFieldAPIKey, token.Token)
+	appendProtoStringField(&metadata, metadataFieldLocale, quotaSyncGatewayLocale)
+	appendProtoStringField(&metadata, metadataFieldOS, runtime.GOOS)
+	appendProtoStringField(&metadata, metadataFieldHardware, runtime.GOARCH)
+	appendProtoBoolField(&metadata, metadataFieldDisableTelemetry, true)
+	appendProtoStringField(&metadata, metadataFieldSessionID, buildQuotaSyncStableComponent("session", token))
+	appendProtoUint64Field(&metadata, metadataFieldRequestID, uint64(time.Now().UnixNano()))
+	appendProtoStringField(&metadata, metadataFieldUserAgent, quotaSyncGatewayUserAgent)
+	appendProtoUint64Field(&metadata, metadataFieldAuthSource, quotaSyncAuthSourceCodeium)
+	appendProtoStringField(&metadata, metadataFieldExtensionName, quotaSyncGatewayExtName)
+	appendProtoStringField(&metadata, metadataFieldDeviceFingerprint, buildQuotaSyncStableComponent("device", token))
+	return metadata
+}
+
+func wrapConnectProtoMessage(payload []byte) []byte {
+	framed := make([]byte, 5+len(payload))
+	binary.BigEndian.PutUint32(framed[1:5], uint32(len(payload)))
+	copy(framed[5:], payload)
+	return framed
+}
+
+func buildQuotaSyncStableComponent(kind string, token *database.Token) string {
+	if token == nil {
+		return ""
+	}
+	parts := []string{token.ID, token.Name, token.TenantAddress}
+	if token.Email != nil && strings.TrimSpace(*token.Email) != "" {
+		parts = append(parts, strings.ToLower(strings.TrimSpace(*token.Email)))
+	}
+	sum := sha256.Sum256([]byte(kind + "|" + strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])
+}
+
+const (
+	topLevelMetadataFieldNumber    = 1
+	metadataFieldIDEName           = 1
+	metadataFieldExtensionVersion  = 2
+	metadataFieldAPIKey            = 3
+	metadataFieldLocale            = 4
+	metadataFieldOS                = 5
+	metadataFieldDisableTelemetry  = 6
+	metadataFieldIDEVersion        = 7
+	metadataFieldHardware          = 8
+	metadataFieldRequestID         = 9
+	metadataFieldSessionID         = 10
+	metadataFieldUserAgent         = 13
+	metadataFieldAuthSource        = 15
+	metadataFieldExtensionName     = 12
+	metadataFieldDeviceFingerprint = 24
+)

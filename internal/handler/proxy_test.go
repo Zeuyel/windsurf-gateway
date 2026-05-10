@@ -15,18 +15,18 @@ func TestExtractGatewayUserToken(t *testing.T) {
 	}{
 		{
 			name:   "gateway bearer token",
-			header: "Bearer ws-abc123",
-			want:   "ws-abc123",
+			header: "Bearer devin-session-token$abcdef1234567890",
+			want:   "devin-session-token$abcdef1234567890",
 		},
 		{
 			name:   "gateway basic token",
-			header: "Basic ws-abc123",
-			want:   "ws-abc123",
+			header: "Basic devin-session-token$abcdef1234567890",
+			want:   "devin-session-token$abcdef1234567890",
 		},
 		{
 			name:   "gateway duplicated basic token",
-			header: "Basic ws-abc123-ws-abc123",
-			want:   "ws-abc123",
+			header: "Basic devin-session-token$abcdef1234567890-devin-session-token$abcdef1234567890",
+			want:   "devin-session-token$abcdef1234567890",
 		},
 		{
 			name:   "bearer upstream token is ignored",
@@ -39,9 +39,9 @@ func TestExtractGatewayUserToken(t *testing.T) {
 			want:   "",
 		},
 		{
-			name:   "raw token is ignored",
-			header: "ws-abc123",
-			want:   "",
+			name:   "raw token is accepted",
+			header: "devin-session-token$abcdef1234567890",
+			want:   "devin-session-token$abcdef1234567890",
 		},
 	}
 
@@ -55,15 +55,27 @@ func TestExtractGatewayUserToken(t *testing.T) {
 }
 
 func TestClassifyProxyOutcomeOptional401DoesNotPenalizeToken(t *testing.T) {
-	outcome := classifyProxyOutcome("/exa.api_server_pb.ApiServerService/CheckChatCapacity", &proxy.ProxyResponse{
-		StatusCode: http.StatusUnauthorized,
-	}, nil)
-
-	if outcome.Penalize {
-		t.Fatal("expected optional 401 not to penalize token")
+	paths := []string{
+		"/exa.api_server_pb.ApiServerService/CheckChatCapacity",
+		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
+		"/exa.seat_management_pb.SeatManagementService/GetProfileData",
+		"/exa.seat_management_pb.SeatManagementService/MigrateApiKey",
+		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries",
 	}
-	if outcome.FailureCategory != "optional_upstream_401" {
-		t.Fatalf("unexpected failure category: %s", outcome.FailureCategory)
+
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			outcome := classifyProxyOutcome(path, &proxy.ProxyResponse{
+				StatusCode: http.StatusUnauthorized,
+			}, nil)
+
+			if outcome.Penalize {
+				t.Fatal("expected optional 401 not to penalize token")
+			}
+			if outcome.FailureCategory != "optional_upstream_401" {
+				t.Fatalf("unexpected failure category: %s", outcome.FailureCategory)
+			}
+		})
 	}
 }
 

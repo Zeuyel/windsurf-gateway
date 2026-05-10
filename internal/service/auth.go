@@ -1,13 +1,12 @@
 package service
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"windsurf-gateway/internal/database"
+	"windsurf-gateway/internal/gatewayuser"
 	"windsurf-gateway/internal/logger"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -118,11 +117,7 @@ func (s *AuthService) UpdateUser(userID uint, updates map[string]interface{}) er
 }
 
 func generateAPIKey() (string, error) {
-	bytes := make([]byte, 24)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return "ws-" + hex.EncodeToString(bytes), nil
+	return gatewayuser.Generate()
 }
 
 func (s *AuthService) RegenerateAPIToken(userID uint) (string, error) {

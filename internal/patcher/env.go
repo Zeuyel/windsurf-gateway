@@ -154,6 +154,8 @@ func classifyAuthMode(token string) string {
 	switch {
 	case token == "":
 		return "none"
+	case strings.HasPrefix(strings.ToLower(token), strings.ToLower("devin-session-token$")):
+		return "gateway-user"
 	case strings.HasPrefix(strings.ToLower(token), "ws-"):
 		return "gateway-user"
 	case strings.HasPrefix(strings.ToLower(token), GatewayPlaceholderPrefix):

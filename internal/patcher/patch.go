@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"windsurf-gateway/internal/gatewayuser"
 )
 
 var (
@@ -48,24 +50,16 @@ func Apply(options ApplyOptions) (ApplyResult, error) {
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(options.GatewayURL)), "http://") && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(options.GatewayURL)), "https://") {
 		return ApplyResult{}, fmt.Errorf("gateway_url must start with http:// or https://")
 	}
-	if auth := strings.TrimSpace(options.AuthToken); auth != "" && !strings.HasPrefix(strings.ToLower(auth), "ws-") {
-		return ApplyResult{}, fmt.Errorf("auth_token must start with ws-")
+	authToken := strings.TrimSpace(options.AuthToken)
+	if !gatewayuser.IsToken(authToken) {
+		return ApplyResult{}, fmt.Errorf("auth_token is required and must start with %s", gatewayuser.TokenPrefix)
 	}
 
 	env := ResolveEnvironment(options.ConfigDir, options.InstallDir)
 	backup := newBackupSession(env.BackupRoot)
-	state, err := ensurePatchState(env.PatchState)
-	if err != nil {
-		return ApplyResult{}, err
-	}
 	_ = backup.Backup(env.PatchState)
-
-	effectiveToken := strings.TrimSpace(options.AuthToken)
+	effectiveToken := authToken
 	effectiveMode := "gateway-user"
-	if effectiveToken == "" {
-		effectiveToken = state.PlaceholderAPIKey
-		effectiveMode = classifyAuthMode(effectiveToken)
-	}
 
 	messages := make([]string, 0, 8)
 	if options.Mode == ModeConfig || options.Mode == ModeAll {
@@ -213,9 +207,13 @@ func patchExtension(extensionPath, gatewayURL, registerGatewayURL, effectiveToke
 
 	fallbackBlock := buildAuthFallbackBlock(effectiveToken)
 	if authFallbackBlockRegex.MatchString(content) {
-		content = authFallbackBlockRegex.ReplaceAllString(content, fallbackBlock)
+		content = authFallbackBlockRegex.ReplaceAllStringFunc(content, func(string) string {
+			return fallbackBlock
+		})
 	} else {
-		content = authFallbackRegex.ReplaceAllString(content, `${0}`+fallbackBlock)
+		content = authFallbackRegex.ReplaceAllStringFunc(content, func(match string) string {
+			return match + fallbackBlock
+		})
 	}
 	if !strings.Contains(content, userStatusFallbackSentinel) {
 		content = userStatusFallbackRegex.ReplaceAllString(content, `${1}.StatusBar.getInstance().setAuthStatus(!0),${2}.windsurfAuth.setAuthStatus({apiKey:${4},allowedCommandModelConfigsProtoBinaryBase64:[],userStatusProtoBinaryBase64:""}),!0`)

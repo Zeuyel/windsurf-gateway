@@ -17,6 +17,26 @@ func appendProtoStringField(buf *[]byte, fieldNumber int, value string) {
 	*buf = append(*buf, value...)
 }
 
+func appendProtoBytesField(buf *[]byte, fieldNumber int, value []byte) {
+	appendVarint(buf, uint64(fieldNumber<<3|2))
+	appendVarint(buf, uint64(len(value)))
+	*buf = append(*buf, value...)
+}
+
+func appendProtoBoolField(buf *[]byte, fieldNumber int, value bool) {
+	appendVarint(buf, uint64(fieldNumber<<3|0))
+	if value {
+		appendVarint(buf, 1)
+		return
+	}
+	appendVarint(buf, 0)
+}
+
+func appendProtoUint64Field(buf *[]byte, fieldNumber int, value uint64) {
+	appendVarint(buf, uint64(fieldNumber<<3|0))
+	appendVarint(buf, value)
+}
+
 func appendVarint(buf *[]byte, value uint64) {
 	for value >= 0x80 {
 		*buf = append(*buf, byte(value)|0x80)

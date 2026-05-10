@@ -307,6 +307,13 @@ func buildStableSessionID(token *database.Token) string {
 	return stableProfileComponent("session", token, 64)
 }
 
+func buildStableDeviceFingerprint(token *database.Token) string {
+	if token == nil {
+		return ""
+	}
+	return stableProfileComponent("device", token, 64)
+}
+
 func stableProfileComponent(kind string, token *database.Token, length int) string {
 	seed := stableProfileSeed(token)
 	sum := sha256.Sum256([]byte(kind + "|" + seed))
@@ -387,7 +394,12 @@ func (p *ProxyService) buildTargetURL(tenantAddress, path string) (string, error
 func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, targetURL string) (*http.Request, error) {
 	bodyBytes := req.Body
 	if req.Token != nil && req.Token.Token != "" {
-		rewrittenBody, err := rewriteUpstreamAuthPayload(req.ContentType, req.Body, req.Token.Token)
+		rewrittenBody, err := rewriteUpstreamAuthPayload(req.Path, req.ContentType, req.Body, upstreamAuthProfile{
+			BackendToken:            req.Token.Token,
+			StableSessionID:         buildStableSessionID(req.Token),
+			StableUserAgent:         p.buildUpstreamUserAgent(req),
+			StableDeviceFingerprint: buildStableDeviceFingerprint(req.Token),
+		})
 		if err != nil {
 			logger.Warnf("[Proxy] Skip auth payload rewrite for %s %s: %v", req.Method, req.Path, err)
 		} else {

@@ -599,7 +599,7 @@ const indexHTML = `<!doctype html>
         <p>这个页面只做一件事：把 Windsurf 按步骤接到你的 Gateway。界面一次只显示当前一步，用户不需要同时理解所有技术细节。</p>
         <div class="hero-tags">
           <span class="hero-tag">本地页面，不上传配置</span>
-          <span class="hero-tag">支持匿名粘性 / 用户令牌</span>
+          <span class="hero-tag">强制用户鉴权接入</span>
           <span class="hero-tag">自动备份，可一键恢复</span>
         </div>
       </div>
@@ -644,26 +644,21 @@ const indexHTML = `<!doctype html>
               <div class="step-index">2</div>
               <div>
                 <h2>选择接入模式</h2>
-                <p>这里决定客户端如何接入 Gateway。匿名粘性更轻，网关用户令牌更适合多人共享并做用户级管控。</p>
+                <p>这里强制使用后台分配的 Gateway 用户令牌接入。客户端不会匿名直连，这个令牌也不会透传给 Windsurf 上游。</p>
               </div>
             </div>
-            <span class="pill active" id="pill-mode">匿名粘性</span>
+            <span class="pill active" id="pill-mode">网关用户令牌</span>
           </div>
           <div class="mode-grid">
-            <button id="mode-anon" class="mode-card active" type="button">
-              <strong>匿名粘性</strong>
-              <span>每台客户端生成独立占位 key，只进入 Gateway，不把真实客户端身份透传给上游。</span>
-              <span class="mode-note">适合 Gateway 允许匿名接入时使用</span>
-            </button>
-            <button id="mode-user" class="mode-card" type="button">
+            <button id="mode-user" class="mode-card active" type="button">
               <strong>网关用户令牌</strong>
-              <span>客户端先携带后台分配的 <code>ws-...</code> 用户令牌接入，再由 Gateway 按用户做限速、封禁和策略分发。</span>
-              <span class="mode-note">适合管理员开启用户鉴权时使用</span>
+              <span>客户端先携带后台分配的 <code>devin-session-token$...</code> 用户令牌接入，再由 Gateway 按用户做限速、封禁和策略分发。</span>
+              <span class="mode-note">这是当前唯一支持的接入方式</span>
             </button>
           </div>
-          <div id="auth-block" class="field hidden">
+          <div id="auth-block" class="field">
             <label for="auth-token">Gateway 用户令牌</label>
-            <input id="auth-token" placeholder="ws-xxxxxxxx">
+            <input id="auth-token" placeholder="devin-session-token$xxxxxxxx">
             <div class="field-hint">这个令牌只会发送给你的 Gateway，不会上送到 Windsurf 上游。</div>
           </div>
         </section>
@@ -772,8 +767,8 @@ const indexHTML = `<!doctype html>
         </div>
         <div class="summary-card">
           <strong>接入模式</strong>
-          <div class="summary-value" id="summary-auth">匿名粘性</div>
-          <div class="summary-meta" id="summary-auth-meta">默认不会把真实客户端身份直接透传给上游。</div>
+          <div class="summary-value" id="summary-auth">网关用户令牌</div>
+          <div class="summary-meta" id="summary-auth-meta">所有客户端都必须先携带 Gateway 分发的用户令牌。</div>
         </div>
         <div class="summary-card">
           <strong>本次改写范围</strong>
@@ -830,7 +825,7 @@ const indexHTML = `<!doctype html>
 
   <script>
     const state = {
-      authMode: 'anonymous',
+      authMode: 'gateway-user',
       detect: null,
       currentStep: 1,
       developerOpen: false,
@@ -894,7 +889,7 @@ const indexHTML = `<!doctype html>
     }
 
     function userModeReady() {
-      return state.authMode !== 'gateway-user' || !!currentAuthTokenValue()
+      return !!currentAuthTokenValue()
     }
 
     function gatewayReady() {
@@ -941,10 +936,9 @@ const indexHTML = `<!doctype html>
     }
 
     function setAuthMode(mode) {
-      state.authMode = mode
-      $('mode-anon').classList.toggle('active', mode === 'anonymous')
-      $('mode-user').classList.toggle('active', mode === 'gateway-user')
-      $('auth-block').classList.toggle('hidden', mode !== 'gateway-user')
+      state.authMode = 'gateway-user'
+      if ($('mode-user')) $('mode-user').classList.toggle('active', true)
+      if ($('auth-block')) $('auth-block').classList.toggle('hidden', false)
       refreshWizardState()
     }
 
@@ -985,8 +979,6 @@ const indexHTML = `<!doctype html>
       switch (mode) {
         case 'gateway-user':
           return '网关用户令牌'
-        case 'per-client-placeholder':
-          return '匿名粘性'
         case 'legacy-shared-placeholder':
           return '旧版共享占位'
         case 'custom':
@@ -1002,8 +994,6 @@ const indexHTML = `<!doctype html>
       switch (result.patch_state_mode) {
         case 'gateway-user':
           return '用户分发'
-        case 'per-client-placeholder':
-          return '匿名粘性'
         case 'legacy-shared-placeholder':
           return '旧版占位'
         case 'none':
@@ -1110,7 +1100,7 @@ const indexHTML = `<!doctype html>
         case 1:
           return hasDetectResult() ? '检测完成后，点下一步进入接入模式选择。' : '先完成本机检测，确认路径正常。'
         case 2:
-          return userModeReady() ? '模式已经选好，可以继续填写 Gateway 地址。' : '如果选择了用户令牌模式，需要先填入 ws 令牌。'
+          return userModeReady() ? '用户令牌已经具备，可以继续填写 Gateway 地址。' : '这里必须先填入 devin-session-token$ 用户令牌。'
         case 3:
           return gatewayReady() ? '地址已具备，可以继续检查高级路径。' : '这里必须先填 Gateway 根地址。'
         case 4:
@@ -1148,17 +1138,17 @@ const indexHTML = `<!doctype html>
       const applyReady = readyToApply()
 
       setPill('pill-detect', detectReady ? '已检测' : '待检测', detectReady ? 'ready' : 'warn')
-      setPill('pill-mode', state.authMode === 'gateway-user' ? (modeReady ? '用户令牌模式' : '等待令牌') : '匿名粘性', state.authMode === 'gateway-user' ? (modeReady ? 'ready' : 'warn') : 'active')
+      setPill('pill-mode', modeReady ? '用户令牌模式' : '等待令牌', modeReady ? 'ready' : 'warn')
       setPill('pill-gateway', gatewayDone ? '地址已填写' : '待填写', gatewayDone ? 'ready' : 'warn')
       setPill('pill-advanced', advancedDone ? '使用自定义路径' : '默认自动识别', advancedDone ? 'active' : '')
       setPill('pill-run', applyReady ? '可以执行' : '等待前置步骤', applyReady ? 'ready' : 'warn')
 
       $('summary-gateway').textContent = gatewayDone ? currentGatewayValue() : '-'
       $('summary-gateway-meta').textContent = gatewayDone ? '将写入 settings.json 和需要的本地状态。' : '还没有填写地址。'
-      $('summary-auth').textContent = state.authMode === 'gateway-user' ? '网关用户令牌' : '匿名粘性'
-      $('summary-auth-meta').textContent = state.authMode === 'gateway-user'
-        ? (modeReady ? '会使用你填写的 ws 用户令牌接入 Gateway。' : '当前模式需要先补一个 ws 用户令牌。')
-        : '默认不会把真实客户端身份直接透传给上游。'
+      $('summary-auth').textContent = '网关用户令牌'
+      $('summary-auth-meta').textContent = modeReady
+        ? '会使用你填写的 devin-session-token$ 用户令牌接入 Gateway。'
+        : '当前必须先补一个 devin-session-token$ 用户令牌。'
       $('summary-scope').textContent = currentPatchModeLabel()
       $('summary-scope-meta').textContent = currentPatchModeValue() === 'all'
         ? '配置、全局状态和客户端脚本都会一起改写。'
@@ -1181,10 +1171,10 @@ const indexHTML = `<!doctype html>
         },
         {
           tone: modeReady ? 'ready' : (state.currentStep === 2 ? 'active' : ''),
-          title: state.authMode === 'gateway-user' ? '当前模式：网关用户令牌' : '当前模式：匿名粘性',
-          desc: state.authMode === 'gateway-user'
-            ? (modeReady ? '用户令牌已经具备，可以按用户分发。' : '你选了用户令牌模式，还需要填一个 ws 令牌。')
-            : '每台客户端会生成独立占位 key，不直接透传真实身份。'
+          title: '当前模式：网关用户令牌',
+          desc: modeReady
+            ? '用户令牌已经具备，可以按用户分发。'
+            : '这里必须先填一个 devin-session-token$ 令牌。'
         },
         {
           tone: gatewayDone ? 'ready' : (state.currentStep === 3 ? 'active' : ''),
@@ -1263,7 +1253,6 @@ const indexHTML = `<!doctype html>
       }
     }
 
-    $('mode-anon').addEventListener('click', function() { setAuthMode('anonymous') })
     $('mode-user').addEventListener('click', function() { setAuthMode('gateway-user') })
     $('apply').addEventListener('click', applyPatch)
     $('refresh').addEventListener('click', function() { refreshDetect('检测完成，请进入下一步。') })
