@@ -29,6 +29,7 @@ type ProxyHandler struct {
 const (
 	gatewayClientIDHeader         = "X-Windsurf-Gateway-Client-Id"
 	legacyGatewayPlaceholderToken = "sk-ws-01-gateway-placeholder"
+	gatewayClientBindingTTL       = 30 * time.Minute
 )
 
 func NewProxyHandler(proxySvc *proxy.ProxyService, services *service.Services) *ProxyHandler {
@@ -39,9 +40,15 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	requestID := uuid.NewString()
 	c.Writer.Header().Set("X-Request-ID", requestID)
 
+	body, readErr := io.ReadAll(c.Request.Body)
+	if readErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+		return
+	}
+
 	authHeader := c.GetHeader("Authorization")
 	apiKeyHeader := c.GetHeader("X-Api-Key")
-	userToken := extractGatewayUserToken(authHeader, apiKeyHeader)
+	userToken, authSource := h.resolveGatewayUserToken(c, authHeader, apiKeyHeader, body)
 	if userToken == "" {
 		logGatewayAuthFailure(c, requestID, "missing_or_unextractable_user_token", authHeader, apiKeyHeader, "")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "gateway user token required"})
@@ -52,10 +59,15 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	var err error
 	user, err = h.services.UserAuth.GetUserByToken(userToken)
 	if err != nil {
+		if authSource == "binding" {
+			h.clearGatewayClientBinding(c)
+		}
 		logGatewayAuthFailure(c, requestID, "unknown_user_token", authHeader, apiKeyHeader, userToken)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user token"})
 		return
 	}
+	h.rememberGatewayClientBinding(c, userToken)
+	logGatewayAuthResolution(c, requestID, authSource, userToken)
 	if !user.CanMakeRequest() {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded or account disabled"})
 		return
@@ -78,12 +90,18 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 		return
 	}
 
-	h.forwardRequest(c, requestID, user, backendToken)
+	h.forwardRequest(c, requestID, user, backendToken, body)
 }
 
 func (h *ProxyHandler) ForwardWithSystemToken(c *gin.Context) {
 	requestID := uuid.NewString()
 	c.Writer.Header().Set("X-Request-ID", requestID)
+
+	body, readErr := io.ReadAll(c.Request.Body)
+	if readErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+		return
+	}
 
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
@@ -110,16 +128,10 @@ func (h *ProxyHandler) ForwardWithSystemToken(c *gin.Context) {
 		return
 	}
 
-	h.forwardRequest(c, requestID, nil, backendToken)
+	h.forwardRequest(c, requestID, nil, backendToken, body)
 }
 
-func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *database.User, backendToken *database.Token) {
-	body, readErr := io.ReadAll(c.Request.Body)
-	if readErr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
-		return
-	}
-
+func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *database.User, backendToken *database.Token, body []byte) {
 	requestPath := buildRequestPath(c)
 	proxyReq := &proxy.ProxyRequest{
 		Token:               backendToken,
@@ -166,6 +178,57 @@ func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *da
 		logger.Errorf("Proxy error for request %s: %v", requestID, proxyErr)
 		if !c.Writer.Written() {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "proxy request failed", "request_id": requestID})
+		}
+	}
+}
+
+func (h *ProxyHandler) resolveGatewayUserToken(c *gin.Context, authHeader, apiKeyHeader string, body []byte) (string, string) {
+	if token := extractGatewayUserToken(authHeader, apiKeyHeader); token != "" {
+		return token, "header"
+	}
+	if token := proxy.ExtractGatewayUserTokenFromPayload(c.ContentType(), body); token != "" {
+		return token, "payload"
+	}
+	if token := h.lookupGatewayClientBinding(c); token != "" {
+		return token, "binding"
+	}
+	return "", ""
+}
+
+func (h *ProxyHandler) rememberGatewayClientBinding(c *gin.Context, userToken string) {
+	if h == nil || h.services == nil || h.services.Cache == nil || !gatewayuser.IsToken(userToken) {
+		return
+	}
+	for _, key := range buildGatewayClientBindingKeys(c) {
+		if err := h.services.Cache.Set(key, userToken, gatewayClientBindingTTL); err != nil {
+			logger.Warnf("Failed to cache gateway client binding %s: %v", key, err)
+		}
+	}
+}
+
+func (h *ProxyHandler) lookupGatewayClientBinding(c *gin.Context) string {
+	if h == nil || h.services == nil || h.services.Cache == nil {
+		return ""
+	}
+	for _, key := range buildGatewayClientBindingKeys(c) {
+		var userToken string
+		if err := h.services.Cache.Get(key, &userToken); err != nil {
+			continue
+		}
+		if gatewayuser.IsToken(userToken) {
+			return userToken
+		}
+	}
+	return ""
+}
+
+func (h *ProxyHandler) clearGatewayClientBinding(c *gin.Context) {
+	if h == nil || h.services == nil || h.services.Cache == nil {
+		return
+	}
+	for _, key := range buildGatewayClientBindingKeys(c) {
+		if err := h.services.Cache.Delete(key); err != nil {
+			logger.Warnf("Failed to clear gateway client binding %s: %v", key, err)
 		}
 	}
 }
@@ -244,6 +307,43 @@ func buildAnonymousAssignmentKey(authHeader, clientIP string) string {
 func buildHashedAnonymousKey(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	return "anon:" + hex.EncodeToString(sum[:16])
+}
+
+func buildGatewayClientBindingKeys(c *gin.Context) []string {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+
+	userAgent := strings.TrimSpace(c.Request.UserAgent())
+	clientIP := strings.TrimSpace(proxy.GetClientIP(c.Request))
+	remoteAddr := strings.TrimSpace(c.Request.RemoteAddr)
+
+	seeds := make([]string, 0, 4)
+	if clientID := strings.TrimSpace(c.GetHeader(gatewayClientIDHeader)); clientID != "" {
+		seeds = append(seeds, "client-id|"+clientID)
+	}
+	if requestSessionID := strings.TrimSpace(c.GetHeader("X-Request-Session-Id")); requestSessionID != "" {
+		seeds = append(seeds, "request-session|"+requestSessionID)
+	}
+	if remoteAddr != "" {
+		seeds = append(seeds, "remote|"+remoteAddr+"|ua|"+userAgent)
+	}
+	if clientIP != "" {
+		seeds = append(seeds, "client-ip|"+clientIP+"|ua|"+userAgent)
+	}
+
+	keys := make([]string, 0, len(seeds))
+	seen := make(map[string]struct{}, len(seeds))
+	for _, seed := range seeds {
+		sum := sha256.Sum256([]byte(seed))
+		key := "gateway_user_binding:" + hex.EncodeToString(sum[:16])
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func classifyProxyOutcome(requestPath string, resp *proxy.ProxyResponse, err error) service.TokenRequestOutcome {
@@ -437,6 +537,22 @@ func logGatewayAuthFailure(c *gin.Context, requestID, reason, authHeader, apiKey
 		reason,
 		describeGatewayAuthHeader(authHeader),
 		describeGatewayAuthHeader(apiKeyHeader),
+		summarizeGatewayToken(extractedToken),
+		proxy.GetClientIP(c.Request),
+		c.Request.UserAgent(),
+	)
+}
+
+func logGatewayAuthResolution(c *gin.Context, requestID, source, extractedToken string) {
+	if source == "" || source == "header" {
+		return
+	}
+	logger.Infof(
+		"[ProxyAuth] request=%s method=%s path=%s source=%s token=%s client_ip=%s user_agent=%q",
+		requestID,
+		c.Request.Method,
+		buildRequestPath(c),
+		source,
 		summarizeGatewayToken(extractedToken),
 		proxy.GetClientIP(c.Request),
 		c.Request.UserAgent(),
