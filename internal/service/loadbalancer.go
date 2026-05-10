@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +96,12 @@ func (s *LoadBalancerService) SelectTokenForAssignmentWithPolicy(ctx context.Con
 		}
 	}
 	if len(candidates) == 0 {
+		logger.Warnf(
+			"No backend token satisfied scheduling policy assignment=%s require_windsurf_quota=%t tokens=%s",
+			assignmentKey,
+			policy.RequireWindsurfQuota,
+			summarizeTokenEligibility(tokens, now, policy),
+		)
 		return nil, fmt.Errorf("no available backend tokens")
 	}
 
@@ -364,4 +371,59 @@ func isTokenEligibleForPolicy(token *database.Token, now time.Time, policy Token
 		return false
 	}
 	return true
+}
+
+func summarizeTokenEligibility(tokens []database.Token, now time.Time, policy TokenSelectionPolicy) string {
+	if len(tokens) == 0 {
+		return "none"
+	}
+
+	parts := make([]string, 0, len(tokens))
+	for i := range tokens {
+		token := &tokens[i]
+		reasons := tokenIneligibilityReasons(token, now, policy)
+		if len(reasons) == 0 {
+			reasons = append(reasons, "eligible")
+		}
+
+		parts = append(parts, fmt.Sprintf(
+			"%s(status=%s pool=%s quota_updated=%t daily=%d weekly=%d reasons=%s)",
+			token.ID,
+			token.Status,
+			token.PoolStatus,
+			token.QuotaUpdatedAt != nil,
+			token.DailyQuotaRemainingPercent,
+			token.WeeklyQuotaRemainingPercent,
+			strings.Join(reasons, "+"),
+		))
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+func tokenIneligibilityReasons(token *database.Token, now time.Time, policy TokenSelectionPolicy) []string {
+	if token == nil {
+		return []string{"nil"}
+	}
+
+	reasons := make([]string, 0, 6)
+	if token.Status != TokenStatusActive {
+		reasons = append(reasons, "status_"+token.Status)
+	}
+	if token.ExpiresAt != nil && token.ExpiresAt.Before(now) {
+		reasons = append(reasons, "expired")
+	}
+	if token.MaxRequests > 0 && token.UsedRequests >= token.MaxRequests {
+		reasons = append(reasons, "max_requests_reached")
+	}
+	if token.CooldownUntil != nil && token.CooldownUntil.After(now) {
+		reasons = append(reasons, "cooldown")
+	}
+	if token.PoolStatus != TokenPoolAvailable {
+		reasons = append(reasons, "pool_"+token.PoolStatus)
+	}
+	if policy.RequireWindsurfQuota && !token.HasGatewayQuotaAvailable() {
+		reasons = append(reasons, "gateway_quota_blocked")
+	}
+	return reasons
 }

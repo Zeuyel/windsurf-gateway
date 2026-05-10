@@ -79,9 +79,10 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 		return
 	}
 
+	requestPath := buildRequestPath(c)
 	assignmentKey := buildAssignmentKey(c, user)
 	selectionPolicy := service.TokenSelectionPolicy{
-		RequireWindsurfQuota: !user.UnlimitedAccess,
+		RequireWindsurfQuota: !user.UnlimitedAccess && shouldRequireWindsurfQuotaForPath(requestPath),
 	}
 	backendToken, err := h.services.LoadBalancer.SelectTokenForAssignmentWithPolicy(c.Request.Context(), assignmentKey, selectionPolicy)
 	if err != nil {
@@ -344,6 +345,35 @@ func buildGatewayClientBindingKeys(c *gin.Context) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func shouldRequireWindsurfQuotaForPath(requestPath string) bool {
+	path := stripQuery(requestPath)
+
+	switch path {
+	case "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+		"/exa.api_server_pb.ApiServerService/Ping",
+		"/exa.api_server_pb.ApiServerService/GetStatus",
+		"/exa.api_server_pb.ApiServerService/GetModelStatuses",
+		"/exa.api_server_pb.ApiServerService/GetCliModelConfigs",
+		"/exa.api_server_pb.ApiServerService/GetCommandModelConfigs",
+		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
+		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries",
+		"/exa.auth_pb.AuthService/GetUserJwt",
+		"/exa.seat_management_pb.SeatManagementService/GetProfileData",
+		"/exa.seat_management_pb.SeatManagementService/GetCliTeamSettings",
+		"/exa.seat_management_pb.SeatManagementService/MigrateApiKey":
+		return false
+	}
+
+	switch {
+	case strings.HasPrefix(path, "/exa.product_analytics_pb."),
+		strings.HasPrefix(path, "/exa.analytics_pb."),
+		strings.HasPrefix(path, "/exa.api_server_pb.ApiServerService/Record"):
+		return false
+	default:
+		return true
+	}
 }
 
 func classifyProxyOutcome(requestPath string, resp *proxy.ProxyResponse, err error) service.TokenRequestOutcome {
