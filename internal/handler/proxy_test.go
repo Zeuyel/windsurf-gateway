@@ -69,6 +69,7 @@ func TestClassifyProxyOutcomeOptional401DoesNotPenalizeToken(t *testing.T) {
 	paths := []string{
 		"/exa.api_server_pb.ApiServerService/CheckChatCapacity",
 		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
+		"/exa.auth_pb.AuthService/GetUserJwt",
 		"/exa.seat_management_pb.SeatManagementService/GetProfileData",
 		"/exa.seat_management_pb.SeatManagementService/MigrateApiKey",
 		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries",

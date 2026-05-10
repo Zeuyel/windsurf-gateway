@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"windsurf-gateway/internal/gatewayuser"
 )
 
 const (
@@ -50,9 +52,6 @@ var apiKeyRewritePaths = map[string]struct{}{
 
 func rewriteUpstreamAuthPayload(requestPath, contentType string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
 	if len(body) == 0 || strings.TrimSpace(profile.BackendToken) == "" {
-		return body, nil
-	}
-	if !shouldRewriteMetadata(requestPath) && !shouldRewriteAPIKey(requestPath) {
 		return body, nil
 	}
 
@@ -136,14 +135,25 @@ func rewriteConnectProtoAuthPayload(requestPath string, body []byte, profile ups
 }
 
 func rewriteProtoAuthPayload(requestPath string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
+	rewrittenBody := body
+	var err error
+
 	switch {
 	case shouldRewriteMetadata(requestPath):
-		return rewriteTopLevelMetadataField(body, topLevelMetadataField, profile)
+		rewrittenBody, err = rewriteTopLevelMetadataField(body, topLevelMetadataField, profile)
 	case shouldRewriteAPIKey(requestPath):
-		return rewriteTopLevelStringField(body, topLevelAPIKeyField, profile.BackendToken)
-	default:
-		return body, nil
+		rewrittenBody, err = rewriteTopLevelStringField(body, topLevelAPIKeyField, profile.BackendToken)
 	}
+
+	if err != nil {
+		return body, err
+	}
+
+	rewrittenBody, err = rewriteAnyGatewayTokenInProto(rewrittenBody, profile.BackendToken)
+	if err != nil {
+		return body, err
+	}
+	return rewrittenBody, nil
 }
 
 func rewriteJSONAuthPayload(requestPath string, body []byte, profile upstreamAuthProfile) ([]byte, error) {
@@ -175,6 +185,10 @@ func rewriteJSONAuthPayload(requestPath string, body []byte, profile upstreamAut
 			root["api_key"] = profile.BackendToken
 			changed = true
 		}
+	}
+
+	if rewriteAnyGatewayTokenInJSON(root, profile.BackendToken) {
+		changed = true
 	}
 
 	if !changed {
@@ -216,6 +230,119 @@ func rewriteJSONMetadataObject(metadata map[string]any, profile upstreamAuthProf
 	drop("teamId")
 
 	return changed
+}
+
+func rewriteAnyGatewayTokenInJSON(value any, replacement string) bool {
+	changed := false
+
+	switch current := value.(type) {
+	case map[string]any:
+		for key, child := range current {
+			switch typed := child.(type) {
+			case string:
+				if gatewayuser.Extract(typed) != "" && typed != replacement {
+					current[key] = replacement
+					changed = true
+				}
+			default:
+				if rewriteAnyGatewayTokenInJSON(typed, replacement) {
+					changed = true
+				}
+			}
+		}
+	case []any:
+		for idx, child := range current {
+			switch typed := child.(type) {
+			case string:
+				if gatewayuser.Extract(typed) != "" && typed != replacement {
+					current[idx] = replacement
+					changed = true
+				}
+			default:
+				if rewriteAnyGatewayTokenInJSON(typed, replacement) {
+					changed = true
+				}
+			}
+		}
+	}
+
+	return changed
+}
+
+func rewriteAnyGatewayTokenInProto(data []byte, replacement string) ([]byte, error) {
+	var out bytes.Buffer
+	changed := false
+	idx := 0
+
+	for idx < len(data) {
+		fieldStart := idx
+		tag, tagWidth, ok := decodeVarintBytes(data[idx:])
+		if !ok {
+			return data, fmt.Errorf("decode proto tag failed")
+		}
+		idx += tagWidth
+
+		wireType := int(tag & 0x7)
+		switch wireType {
+		case 0:
+			valueWidth, ok := skipVarintBytes(data[idx:])
+			if !ok {
+				return data, fmt.Errorf("decode proto varint field failed")
+			}
+			out.Write(data[fieldStart : idx+valueWidth])
+			idx += valueWidth
+		case 1:
+			if idx+8 > len(data) {
+				return data, fmt.Errorf("decode proto fixed64 overflow")
+			}
+			out.Write(data[fieldStart : idx+8])
+			idx += 8
+		case 2:
+			length, lengthWidth, ok := decodeVarintBytes(data[idx:])
+			if !ok {
+				return data, fmt.Errorf("decode proto length failed")
+			}
+			idx += lengthWidth
+			end := idx + int(length)
+			if end > len(data) {
+				return data, fmt.Errorf("decode proto field overflow")
+			}
+
+			payload := data[idx:end]
+			replacementPayload := payload
+			localChanged := false
+
+			if token := gatewayuser.Extract(string(payload)); token != "" {
+				replacementPayload = []byte(replacement)
+				localChanged = string(payload) != replacement
+			} else {
+				rewrittenNested, err := rewriteAnyGatewayTokenInProto(payload, replacement)
+				if err == nil && !bytes.Equal(rewrittenNested, payload) {
+					replacementPayload = rewrittenNested
+					localChanged = true
+				}
+			}
+
+			out.Write(data[fieldStart : fieldStart+tagWidth])
+			writeVarint(&out, uint64(len(replacementPayload)))
+			out.Write(replacementPayload)
+			changed = changed || localChanged
+			idx = end
+		case 5:
+			if idx+4 > len(data) {
+				return data, fmt.Errorf("decode proto fixed32 overflow")
+			}
+			out.Write(data[fieldStart : idx+4])
+			idx += 4
+		default:
+			return data, fmt.Errorf("unsupported proto wire type %d", wireType)
+		}
+	}
+
+	if !changed {
+		return data, nil
+	}
+	return out.Bytes(), nil
 }
 
 func rewriteTopLevelMetadataField(data []byte, targetField int, profile upstreamAuthProfile) ([]byte, error) {

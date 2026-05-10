@@ -471,6 +471,7 @@ func shouldIgnoreAuthCooldown(requestPath string) bool {
 	case "/exa.api_server_pb.ApiServerService/CheckChatCapacity",
 		"/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit",
 		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
+		"/exa.auth_pb.AuthService/GetUserJwt",
 		"/exa.seat_management_pb.SeatManagementService/GetProfileData",
 		"/exa.seat_management_pb.SeatManagementService/MigrateApiKey",
 		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries":
