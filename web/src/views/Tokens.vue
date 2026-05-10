@@ -64,7 +64,28 @@
           </template>
         </el-table-column>
         <el-table-column prop="active_requests" label="并发" width="80" />
-        <el-table-column label="已用/上限" min-width="120">
+        <el-table-column label="套餐/额度" min-width="220">
+          <template #default="{ row }">
+            <div class="quota-cell">
+              <div class="quota-plan">{{ row.plan_name || '未同步 Windsurf 配额' }}</div>
+              <div v-for="line in quotaCreditLines(row)" :key="line" class="quota-sub">{{ line }}</div>
+              <div class="quota-meta">同步时间 {{ formatTime(row.quota_updated_at) }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="日/周剩余" min-width="120">
+          <template #default="{ row }">
+            <div class="quota-sub">日 {{ formatQuotaPercent(row.daily_quota_remaining_percent, row.hide_daily_quota, row.quota_updated_at) }}</div>
+            <div class="quota-sub">周 {{ formatQuotaPercent(row.weekly_quota_remaining_percent, row.hide_weekly_quota, row.quota_updated_at) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="重置时间" min-width="180">
+          <template #default="{ row }">
+            <div class="quota-sub">日 {{ formatQuotaReset(row.daily_quota_reset_at, row.hide_daily_quota, row.quota_updated_at) }}</div>
+            <div class="quota-sub">周 {{ formatQuotaReset(row.weekly_quota_reset_at, row.hide_weekly_quota, row.quota_updated_at) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="请求计数" min-width="120">
           <template #default="{ row }">{{ row.used_requests }} / {{ row.max_requests || '∞' }}</template>
         </el-table-column>
         <el-table-column prop="total_successes" label="成功" width="90" />
@@ -143,7 +164,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="6">
-            <el-form-item label="最大请求">
+            <el-form-item label="手动请求上限">
               <el-input-number v-model="form.max_requests" :min="0" style="width: 100%" />
             </el-form-item>
           </el-col>
@@ -210,7 +231,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="最大请求">
+            <el-form-item label="手动请求上限">
               <el-input-number v-model="smartForm.max_requests" :min="0" style="width: 100%" />
             </el-form-item>
           </el-col>
@@ -310,14 +331,14 @@ const tokenCards = computed(() => [
     meta: `冷却 ${tokenStats.value.cooldown || 0}`,
   },
   {
-    label: '已耗尽',
-    value: tokenStats.value.exhausted || 0,
-    meta: `禁用 ${tokenStats.value.disabled || 0}`,
+    label: '已同步额度',
+    value: tokenStats.value.quota_synced || 0,
+    meta: `日低额 ${tokenStats.value.low_daily_quota || 0} / 周低额 ${tokenStats.value.low_weekly_quota || 0}`,
   },
   {
     label: '活跃并发',
     value: tokenStats.value.total_active_requests || 0,
-    meta: '当前请求级占用',
+    meta: `已耗尽 ${tokenStats.value.exhausted || 0}`,
   },
 ])
 
@@ -541,6 +562,46 @@ const maskToken = (value) => {
   return `${value.slice(0, 6)}...${value.slice(-4)}`
 }
 
+const formatCreditUsage = (used, available, total) => {
+  const usedValue = Number(used || 0)
+  const availableValue = Number(available || 0)
+  const totalValue = Number(total || 0)
+  if (usedValue <= 0 && availableValue <= 0 && totalValue <= 0) {
+    return ''
+  }
+
+  const resolvedTotal = totalValue > 0 ? totalValue : usedValue + availableValue
+  if (resolvedTotal > 0) {
+    return `${usedValue}/${resolvedTotal}`
+  }
+  return `${usedValue}/${availableValue}`
+}
+
+const quotaCreditLines = (row) => {
+  const lines = []
+  const prompt = formatCreditUsage(row.used_prompt_credits, row.available_prompt_credits, row.monthly_prompt_credits)
+  const flow = formatCreditUsage(row.used_flow_credits, row.available_flow_credits, row.monthly_flow_credits)
+  const flex = formatCreditUsage(row.used_flex_credits, row.available_flex_credits, row.monthly_flex_credits)
+
+  if (prompt) lines.push(`Prompt ${prompt}`)
+  if (flow) lines.push(`Flow ${flow}`)
+  if (flex) lines.push(`Flex ${flex}`)
+
+  return lines.length > 0 ? lines : ['尚未从 GetUserStatus 同步额度']
+}
+
+const formatQuotaPercent = (value, hidden, quotaUpdatedAt) => {
+  if (!quotaUpdatedAt) return '-'
+  if (hidden) return '隐藏'
+  return `${Number(value || 0)}%`
+}
+
+const formatQuotaReset = (value, hidden, quotaUpdatedAt) => {
+  if (!quotaUpdatedAt) return '-'
+  if (hidden) return '隐藏'
+  return formatTime(value)
+}
+
 const formatTime = (value) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-')
 const statusTag = (status) => ({ active: 'success', disabled: 'danger', expired: 'warning' }[status] || 'info')
 const poolTag = (status) => ({ available: 'success', cooldown: 'warning', exhausted: 'danger', expired: 'info', disabled: 'danger' }[status] || 'info')
@@ -601,6 +662,28 @@ onMounted(loadAll)
 
 code {
   color: #1d4ed8;
+  font-size: 12px;
+}
+
+.quota-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quota-plan {
+  color: #132238;
+  font-weight: 600;
+}
+
+.quota-sub {
+  color: #4f647c;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.quota-meta {
+  color: #8a9aad;
   font-size: 12px;
 }
 

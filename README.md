@@ -9,6 +9,7 @@ Windsurf Gateway 是一个参照 `augment-open-gateway` 思路实现的远程账
 - **账号池管理**：管理员在后台录入多个 Windsurf/Codeium token 和租户地址。
 - **负载分发**：客户端不需要再登录真实 Windsurf 账号；gateway 从后台账号池选择真实 token 代发请求。
 - **用户系统**：用于 gateway 管理后台、额度控制和可选客户端标识；Windsurf patch 后不依赖原 Windsurf 注册登录。
+- **隐私隔离**：默认开启 privacy mode，gateway 不向上游透传客户端 IP / Cookie / Origin / Referer / 原始 session header，而是按 backend 账号生成稳定的上游 `User-Agent` 与 `X-Request-Session-Id`。
 
 ## Windsurf Patch 关键发现
 
@@ -86,6 +87,8 @@ Patch 工具会尝试处理三类位置：
 - `/opt/windsurf/resources/app/extensions/windsurf/dist/extension.js`
 - `~/.config/Windsurf/User/globalStorage/state.vscdb`
 
+同时会在 `~/.config/Windsurf/User/globalStorage/windsurf-gateway-patch.json` 保存一个本地 placeholder key。这个 key 只用于 gateway 内部把同一台 patched Windsurf 稳定绑定到某个 backend 账号，不会转发给上游服务；真正发往上游的仍然是 backend token 池中的真实 token。
+
 ## 网关请求入口
 
 Windsurf patch 后，客户端的 `codeium.apiServerUrl` 指向 gateway 根地址。Windsurf 原生请求 path 会由 gateway 的 `NoRoute` 兜底接住并转发；同时保留显式入口：
@@ -94,7 +97,16 @@ Windsurf patch 后，客户端的 `codeium.apiServerUrl` 指向 gateway 根地�
 /proxy/*path
 ```
 
-如果请求带 `Authorization: Bearer ws-xxx`，gateway 会按对应 gateway 用户做额度和频率控制；如果没有用户 token，gateway 会直接从系统 Windsurf token 池选择可用真实账号代发请求。也就是说，patch 后客户端不需要再走 Windsurf 的真实注册/登录流程，账号信息来自 gateway 后台维护的 token 池。
+如果请求带 `Authorization: Bearer ws-xxx`，gateway 会按对应 gateway 用户做额度和频率控制；如果没有用户 token，gateway 会根据 patch 写入的本地 placeholder key 对客户端做匿名 sticky，再从系统 Windsurf token 池选择并固定到可用真实账号代发请求。也就是说，patch 后客户端不需要再走 Windsurf 的真实注册/登录流程，账号信息来自 gateway 后台维护的 token 池。
+
+如果你是从旧版本 patch 升级，请重新执行一次：
+
+```bash
+cd patch-tool
+node patch.js --gateway=https://your-gateway.example.com --mode=all
+```
+
+这样会把旧的共享 placeholder 升级成“每个 patched 客户端独有”的 placeholder，避免 gateway 只能退回到 `Authorization + IP` 做匿名分配。
 
 ## 管理接口
 

@@ -73,36 +73,53 @@ func (u *User) IncrementUsage() {
 
 // Token model - represents a backend Windsurf account token.
 type Token struct {
-	ID                  string         `gorm:"primaryKey;size:20" json:"id"`
-	Token               string         `gorm:"size:1024;not null" json:"token"`
-	Name                string         `gorm:"size:100;not null" json:"name"`
-	Description         string         `gorm:"size:500" json:"description"`
-	TenantAddress       string         `gorm:"size:255;not null" json:"tenant_address"`
-	ProxyURL            *string        `gorm:"size:255" json:"proxy_url,omitempty"`
-	Status              string         `gorm:"size:20;default:active;index" json:"status"`
-	PoolStatus          string         `gorm:"size:20;default:available;index" json:"pool_status"`
-	Weight              int            `gorm:"default:1" json:"weight"`
-	MaxRequests         int            `gorm:"default:30000" json:"max_requests"`
-	UsedRequests        int            `gorm:"default:0" json:"used_requests"`
-	ActiveRequests      int            `gorm:"default:0" json:"active_requests"`
-	ConsecutiveFailures int            `gorm:"default:0" json:"consecutive_failures"`
-	TotalFailures       int            `gorm:"default:0" json:"total_failures"`
-	TotalSuccesses      int            `gorm:"default:0" json:"total_successes"`
-	LastStatusCode      int            `gorm:"default:0" json:"last_status_code"`
-	LastError           string         `gorm:"size:1000" json:"last_error,omitempty"`
-	LastUsedAt          *time.Time     `json:"last_used_at,omitempty"`
-	LastErrorAt         *time.Time     `json:"last_error_at,omitempty"`
-	CooldownUntil       *time.Time     `json:"cooldown_until,omitempty"`
-	ExpiresAt           *time.Time     `json:"expires_at"`
-	SubmitterUserID     *uint          `gorm:"index" json:"submitter_user_id,omitempty"`
-	SubmitterName       *string        `gorm:"size:50" json:"submitter_name,omitempty"`
-	IsShared            *bool          `gorm:"default:true" json:"is_shared"`
-	Email               *string        `gorm:"size:100" json:"email,omitempty"`
-	AllocatedToID       *uint          `gorm:"index" json:"allocated_to_id,omitempty"`
-	AllocatedAt         *time.Time     `json:"allocated_at,omitempty"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                          string         `gorm:"primaryKey;size:20" json:"id"`
+	Token                       string         `gorm:"size:1024;not null" json:"token"`
+	Name                        string         `gorm:"size:100;not null" json:"name"`
+	Description                 string         `gorm:"size:500" json:"description"`
+	TenantAddress               string         `gorm:"size:255;not null" json:"tenant_address"`
+	ProxyURL                    *string        `gorm:"size:255" json:"proxy_url,omitempty"`
+	Status                      string         `gorm:"size:20;default:active;index" json:"status"`
+	PoolStatus                  string         `gorm:"size:20;default:available;index" json:"pool_status"`
+	Weight                      int            `gorm:"default:1" json:"weight"`
+	MaxRequests                 int            `gorm:"default:30000" json:"max_requests"`
+	UsedRequests                int            `gorm:"default:0" json:"used_requests"`
+	PlanName                    string         `gorm:"size:100" json:"plan_name"`
+	MonthlyPromptCredits        int            `gorm:"default:0" json:"monthly_prompt_credits"`
+	MonthlyFlowCredits          int            `gorm:"default:0" json:"monthly_flow_credits"`
+	MonthlyFlexCredits          int            `gorm:"default:0" json:"monthly_flex_credits"`
+	AvailablePromptCredits      int            `gorm:"default:0" json:"available_prompt_credits"`
+	UsedPromptCredits           int            `gorm:"default:0" json:"used_prompt_credits"`
+	AvailableFlowCredits        int            `gorm:"default:0" json:"available_flow_credits"`
+	UsedFlowCredits             int            `gorm:"default:0" json:"used_flow_credits"`
+	AvailableFlexCredits        int            `gorm:"default:0" json:"available_flex_credits"`
+	UsedFlexCredits             int            `gorm:"default:0" json:"used_flex_credits"`
+	DailyQuotaRemainingPercent  int            `gorm:"default:0" json:"daily_quota_remaining_percent"`
+	WeeklyQuotaRemainingPercent int            `gorm:"default:0" json:"weekly_quota_remaining_percent"`
+	HideDailyQuota              bool           `gorm:"default:false" json:"hide_daily_quota"`
+	HideWeeklyQuota             bool           `gorm:"default:false" json:"hide_weekly_quota"`
+	DailyQuotaResetAt           *time.Time     `json:"daily_quota_reset_at,omitempty"`
+	WeeklyQuotaResetAt          *time.Time     `json:"weekly_quota_reset_at,omitempty"`
+	QuotaUpdatedAt              *time.Time     `json:"quota_updated_at,omitempty"`
+	ActiveRequests              int            `gorm:"default:0" json:"active_requests"`
+	ConsecutiveFailures         int            `gorm:"default:0" json:"consecutive_failures"`
+	TotalFailures               int            `gorm:"default:0" json:"total_failures"`
+	TotalSuccesses              int            `gorm:"default:0" json:"total_successes"`
+	LastStatusCode              int            `gorm:"default:0" json:"last_status_code"`
+	LastError                   string         `gorm:"size:1000" json:"last_error,omitempty"`
+	LastUsedAt                  *time.Time     `json:"last_used_at,omitempty"`
+	LastErrorAt                 *time.Time     `json:"last_error_at,omitempty"`
+	CooldownUntil               *time.Time     `json:"cooldown_until,omitempty"`
+	ExpiresAt                   *time.Time     `json:"expires_at"`
+	SubmitterUserID             *uint          `gorm:"index" json:"submitter_user_id,omitempty"`
+	SubmitterName               *string        `gorm:"size:50" json:"submitter_name,omitempty"`
+	IsShared                    *bool          `gorm:"default:true" json:"is_shared"`
+	Email                       *string        `gorm:"size:100" json:"email,omitempty"`
+	AllocatedToID               *uint          `gorm:"index" json:"allocated_to_id,omitempty"`
+	AllocatedAt                 *time.Time     `json:"allocated_at,omitempty"`
+	CreatedAt                   time.Time      `json:"created_at"`
+	UpdatedAt                   time.Time      `json:"updated_at"`
+	DeletedAt                   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (t *Token) IsExpired() bool {

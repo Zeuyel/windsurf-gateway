@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"windsurf-gateway/internal/database"
+	"windsurf-gateway/internal/logger"
 
 	"gorm.io/gorm"
 )
@@ -23,6 +24,7 @@ const (
 	defaultAuthCooldown  time.Duration        = 30 * time.Minute
 	defaultQuotaCooldown time.Duration        = 10 * time.Minute
 	defaultErrorCooldown time.Duration        = 2 * time.Minute
+	defaultStickyTTL     time.Duration        = 24 * time.Hour
 )
 
 type LoadBalancerService struct {
@@ -55,11 +57,21 @@ func NewLoadBalancerService(db *gorm.DB, cache *CacheService, token *TokenServic
 }
 
 func (s *LoadBalancerService) SelectToken(ctx context.Context) (*database.Token, error) {
+	return s.SelectTokenForAssignment(ctx, "")
+}
+
+func (s *LoadBalancerService) SelectTokenForAssignment(ctx context.Context, assignmentKey string) (*database.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.token.RefreshTokenStates(); err != nil {
 		return nil, err
+	}
+
+	if sticky, err := s.resolveStickyAssignment(assignmentKey); err != nil {
+		logger.Warnf("Failed to resolve sticky backend token for %s: %v", assignmentKey, err)
+	} else if sticky != nil {
+		return sticky, nil
 	}
 
 	tokens, err := s.token.GetActiveTokens()
@@ -89,6 +101,9 @@ func (s *LoadBalancerService) SelectToken(ctx context.Context) (*database.Token,
 	}
 	selected.ActiveRequests++
 	selected.LastUsedAt = &now
+	if err := s.persistStickyAssignment(ctx, assignmentKey, selected.ID); err != nil {
+		logger.Warnf("Failed to persist sticky backend token for %s: %v", assignmentKey, err)
+	}
 	return selected, nil
 }
 
@@ -281,6 +296,49 @@ func (s *LoadBalancerService) pickWeighted(candidates []*database.Token) (*datab
 		}
 	}
 	return candidates[len(candidates)-1], nil
+}
+
+func (s *LoadBalancerService) resolveStickyAssignment(assignmentKey string) (*database.Token, error) {
+	if assignmentKey == "" || s.cache == nil {
+		return nil, nil
+	}
+
+	var tokenID string
+	if err := s.cache.Get(s.stickyAssignmentCacheKey(assignmentKey), &tokenID); err != nil || tokenID == "" {
+		return nil, nil
+	}
+
+	token, err := s.token.GetByID(tokenID)
+	if err != nil {
+		_ = s.cache.Delete(s.stickyAssignmentCacheKey(assignmentKey))
+		return nil, nil
+	}
+
+	now := time.Now()
+	if !token.IsReadyForScheduling(now) {
+		_ = s.cache.Delete(s.stickyAssignmentCacheKey(assignmentKey))
+		return nil, nil
+	}
+
+	if err := s.acquireToken(token.ID, now); err != nil {
+		return nil, err
+	}
+	token.ActiveRequests++
+	token.LastUsedAt = &now
+	_ = s.cache.Expire(s.stickyAssignmentCacheKey(assignmentKey), defaultStickyTTL)
+	return token, nil
+}
+
+func (s *LoadBalancerService) persistStickyAssignment(ctx context.Context, assignmentKey, tokenID string) error {
+	_ = ctx
+	if assignmentKey == "" || tokenID == "" || s.cache == nil {
+		return nil
+	}
+	return s.cache.Set(s.stickyAssignmentCacheKey(assignmentKey), tokenID, defaultStickyTTL)
+}
+
+func (s *LoadBalancerService) stickyAssignmentCacheKey(assignmentKey string) string {
+	return "sticky_assignment:" + assignmentKey
 }
 
 func truncateString(value string, limit int) string {

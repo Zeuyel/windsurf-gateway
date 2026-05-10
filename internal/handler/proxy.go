@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +24,11 @@ type ProxyHandler struct {
 	proxy    *proxy.ProxyService
 	services *service.Services
 }
+
+const (
+	gatewayClientIDHeader         = "X-Windsurf-Gateway-Client-Id"
+	legacyGatewayPlaceholderToken = "sk-ws-01-gateway-placeholder"
+)
 
 func NewProxyHandler(proxySvc *proxy.ProxyService, services *service.Services) *ProxyHandler {
 	return &ProxyHandler{proxy: proxySvc, services: services}
@@ -52,7 +59,8 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 		}
 	}
 
-	backendToken, err := h.services.LoadBalancer.SelectToken(c.Request.Context())
+	assignmentKey := buildAssignmentKey(c, user)
+	backendToken, err := h.services.LoadBalancer.SelectTokenForAssignment(c.Request.Context(), assignmentKey)
 	if err != nil {
 		logger.Errorf("Failed to select backend token: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no available backend tokens"})
@@ -103,21 +111,32 @@ func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *da
 
 	requestPath := buildRequestPath(c)
 	proxyReq := &proxy.ProxyRequest{
-		Token:         backendToken,
-		Method:        c.Request.Method,
-		Path:          requestPath,
-		Headers:       c.Request.Header,
-		Body:          body,
-		ContentType:   c.ContentType(),
-		ClientIP:      proxy.GetClientIP(c.Request),
-		UserAgent:     c.Request.UserAgent(),
-		TenantAddress: backendToken.TenantAddress,
+		Token:               backendToken,
+		Method:              c.Request.Method,
+		Path:                requestPath,
+		Headers:             c.Request.Header,
+		Body:                body,
+		CaptureResponseBody: shouldCaptureUpstreamResponseBody(requestPath),
+		ContentType:         c.ContentType(),
+		ClientIP:            proxy.GetClientIP(c.Request),
+		UserAgent:           c.Request.UserAgent(),
+		TenantAddress:       backendToken.TenantAddress,
 	}
 
 	proxyResp, proxyErr := h.proxy.ForwardStream(c.Request.Context(), proxyReq, c.Writer)
-	outcome := classifyProxyOutcome(proxyResp, proxyErr)
+	outcome := classifyProxyOutcome(requestPath, proxyResp, proxyErr)
 	if err := h.services.LoadBalancer.CompleteRequest(backendToken.ID, outcome); err != nil {
 		logger.Warnf("Failed to update backend token %s state: %v", backendToken.ID, err)
+	}
+	if shouldSyncTokenQuota(requestPath, proxyResp, proxyErr) {
+		tokenID := backendToken.ID
+		headers := proxyResp.Headers.Clone()
+		bodyCopy := append([]byte(nil), proxyResp.CapturedBody...)
+		go func() {
+			if err := h.services.Token.UpdateQuotaFromGetUserStatusResponse(tokenID, headers, bodyCopy); err != nil {
+				logger.Warnf("Failed to update token %s quota snapshot: %v", tokenID, err)
+			}
+		}()
 	}
 
 	if user != nil {
@@ -182,7 +201,49 @@ func extractGatewayUserToken(value string) string {
 	return token
 }
 
-func classifyProxyOutcome(resp *proxy.ProxyResponse, err error) service.TokenRequestOutcome {
+func buildAssignmentKey(c *gin.Context, user *database.User) string {
+	if user != nil {
+		return fmt.Sprintf("user:%d", user.ID)
+	}
+	if gatewayClientID := extractGatewayClientID(c); gatewayClientID != "" {
+		return buildHashedAnonymousKey("client:" + gatewayClientID)
+	}
+	return buildAnonymousAssignmentKey(c.GetHeader("Authorization"), proxy.GetClientIP(c.Request))
+}
+
+func extractGatewayClientID(c *gin.Context) string {
+	for _, header := range []string{gatewayClientIDHeader, "X-Request-Session-Id"} {
+		if value := strings.TrimSpace(c.GetHeader(header)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func buildAnonymousAssignmentKey(authHeader, clientIP string) string {
+	authHeader = strings.TrimSpace(authHeader)
+	clientIP = strings.TrimSpace(clientIP)
+	if clientIP == "" {
+		clientIP = "unknown"
+	}
+
+	normalizedAuth := strings.ToLower(authHeader)
+	switch {
+	case normalizedAuth == "":
+		return buildHashedAnonymousKey("ip:" + clientIP)
+	case strings.Contains(normalizedAuth, legacyGatewayPlaceholderToken):
+		return buildHashedAnonymousKey("legacy-auth:" + normalizedAuth + "|ip:" + clientIP)
+	default:
+		return buildHashedAnonymousKey("auth:" + normalizedAuth)
+	}
+}
+
+func buildHashedAnonymousKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return "anon:" + hex.EncodeToString(sum[:16])
+}
+
+func classifyProxyOutcome(requestPath string, resp *proxy.ProxyResponse, err error) service.TokenRequestOutcome {
 	outcome := service.TokenRequestOutcome{}
 	if resp != nil {
 		outcome.StatusCode = resp.StatusCode
@@ -224,6 +285,13 @@ func classifyProxyOutcome(resp *proxy.ProxyResponse, err error) service.TokenReq
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
+		if shouldIgnoreAuthCooldown(requestPath) {
+			outcome.FailureCategory = "optional_upstream_401"
+			outcome.ErrorMessage = coalesceProxyError(resp.ErrorMessage, "upstream returned 401")
+			outcome.Penalize = false
+			outcome.Success = false
+			break
+		}
 		outcome.FailureCategory = "upstream_401"
 		outcome.ErrorMessage = coalesceProxyError(resp.ErrorMessage, "upstream returned 401")
 		outcome.Penalize = true
@@ -252,6 +320,36 @@ func classifyProxyOutcome(resp *proxy.ProxyResponse, err error) service.TokenReq
 		outcome.Success = true
 	}
 	return outcome
+}
+
+func shouldCaptureUpstreamResponseBody(requestPath string) bool {
+	return stripQuery(requestPath) == "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
+}
+
+func shouldSyncTokenQuota(requestPath string, resp *proxy.ProxyResponse, err error) bool {
+	if err != nil || resp == nil || resp.StatusCode != http.StatusOK || len(resp.CapturedBody) == 0 {
+		return false
+	}
+	return shouldCaptureUpstreamResponseBody(requestPath)
+}
+
+func shouldIgnoreAuthCooldown(requestPath string) bool {
+	switch stripQuery(requestPath) {
+	case "/exa.api_server_pb.ApiServerService/CheckChatCapacity",
+		"/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit",
+		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
+		"/exa.seat_management_pb.SeatManagementService/GetProfileData":
+		return true
+	default:
+		return false
+	}
+}
+
+func stripQuery(path string) string {
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		return path[:idx]
+	}
+	return path
 }
 
 func buildRequestLog(requestID string, user *database.User, backendToken *database.Token, req *proxy.ProxyRequest, resp *proxy.ProxyResponse, outcome service.TokenRequestOutcome) *database.RequestLog {

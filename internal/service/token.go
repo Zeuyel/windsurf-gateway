@@ -196,6 +196,7 @@ func (s *TokenService) GetStats() (map[string]interface{}, error) {
 	}
 
 	var total, active, expired, disabled, available, cooldown, exhausted int64
+	var quotaSynced, lowDailyQuota, lowWeeklyQuota int64
 	var totalActiveRequests int64
 
 	s.db.Model(&database.Token{}).Count(&total)
@@ -205,6 +206,13 @@ func (s *TokenService) GetStats() (map[string]interface{}, error) {
 	s.db.Model(&database.Token{}).Where("pool_status = ?", TokenPoolAvailable).Count(&available)
 	s.db.Model(&database.Token{}).Where("pool_status = ?", TokenPoolCooldown).Count(&cooldown)
 	s.db.Model(&database.Token{}).Where("pool_status = ?", TokenPoolExhausted).Count(&exhausted)
+	s.db.Model(&database.Token{}).Where("quota_updated_at IS NOT NULL").Count(&quotaSynced)
+	s.db.Model(&database.Token{}).
+		Where("quota_updated_at IS NOT NULL AND hide_daily_quota = ? AND daily_quota_remaining_percent <= ?", false, 20).
+		Count(&lowDailyQuota)
+	s.db.Model(&database.Token{}).
+		Where("quota_updated_at IS NOT NULL AND hide_weekly_quota = ? AND weekly_quota_remaining_percent <= ?", false, 20).
+		Count(&lowWeeklyQuota)
 	s.db.Model(&database.Token{}).Select("COALESCE(SUM(active_requests), 0)").Scan(&totalActiveRequests)
 
 	return map[string]interface{}{
@@ -215,6 +223,9 @@ func (s *TokenService) GetStats() (map[string]interface{}, error) {
 		"available":             available,
 		"cooldown":              cooldown,
 		"exhausted":             exhausted,
+		"quota_synced":          quotaSynced,
+		"low_daily_quota":       lowDailyQuota,
+		"low_weekly_quota":      lowWeeklyQuota,
 		"total_active_requests": totalActiveRequests,
 	}, nil
 }

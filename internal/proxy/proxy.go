@@ -3,7 +3,9 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,15 +50,16 @@ func NewProxyService(cfg *config.Config) *ProxyService {
 }
 
 type ProxyRequest struct {
-	Token         *database.Token
-	Method        string
-	Path          string
-	Headers       http.Header
-	Body          []byte
-	ContentType   string
-	ClientIP      string
-	UserAgent     string
-	TenantAddress string
+	Token               *database.Token
+	Method              string
+	Path                string
+	Headers             http.Header
+	Body                []byte
+	CaptureResponseBody bool
+	ContentType         string
+	ClientIP            string
+	UserAgent           string
+	TenantAddress       string
 }
 
 type ProxyResponse struct {
@@ -66,7 +69,10 @@ type ProxyResponse struct {
 	Latency      time.Duration
 	ErrorMessage string
 	BodySnippet  string
+	CapturedBody []byte
 }
+
+const defaultGatewayUserAgent = "WindsurfGateway/1.0"
 
 func (p *ProxyService) hasProxyConfigured(token *database.Token) bool {
 	return token != nil && token.ProxyURL != nil && *token.ProxyURL != ""
@@ -159,6 +165,7 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 	}
 	buffer := make([]byte, bufferSize)
 	var snippet bytes.Buffer
+	var captured bytes.Buffer
 	var totalBytes int64
 
 	for {
@@ -173,6 +180,13 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 				}
 				snippet.Write(chunk[:remaining])
 			}
+			if req.CaptureResponseBody && captured.Len() < 256*1024 {
+				remaining := 256*1024 - captured.Len()
+				if remaining > n {
+					remaining = n
+				}
+				captured.Write(chunk[:remaining])
+			}
 			if _, writeErr := w.Write(chunk); writeErr != nil {
 				latency := time.Since(startTime)
 				return &ProxyResponse{
@@ -182,6 +196,7 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 					Latency:      latency,
 					ErrorMessage: writeErr.Error(),
 					BodySnippet:  buildBodySnippet(resp.Header, snippet.Bytes()),
+					CapturedBody: cloneBytes(captured.Bytes()),
 				}, fmt.Errorf("write response: %w", writeErr)
 			}
 			if flusher != nil {
@@ -192,11 +207,12 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 		if readErr != nil {
 			if readErr == io.EOF {
 				return &ProxyResponse{
-					StatusCode:  resp.StatusCode,
-					Headers:     resp.Header,
-					Size:        totalBytes,
-					Latency:     time.Since(startTime),
-					BodySnippet: buildBodySnippet(resp.Header, snippet.Bytes()),
+					StatusCode:   resp.StatusCode,
+					Headers:      resp.Header,
+					Size:         totalBytes,
+					Latency:      time.Since(startTime),
+					BodySnippet:  buildBodySnippet(resp.Header, snippet.Bytes()),
+					CapturedBody: cloneBytes(captured.Bytes()),
 				}, nil
 			}
 			latency := time.Since(startTime)
@@ -207,6 +223,7 @@ func (p *ProxyService) ForwardStream(ctx context.Context, req *ProxyRequest, w h
 				Latency:      latency,
 				ErrorMessage: readErr.Error(),
 				BodySnippet:  buildBodySnippet(resp.Header, snippet.Bytes()),
+				CapturedBody: cloneBytes(captured.Bytes()),
 			}, fmt.Errorf("read upstream response: %w", readErr)
 		}
 	}
@@ -259,6 +276,57 @@ func isTextLikePayload(body []byte) bool {
 	}
 
 	return true
+}
+
+func cloneBytes(value []byte) []byte {
+	if len(value) == 0 {
+		return nil
+	}
+	out := make([]byte, len(value))
+	copy(out, value)
+	return out
+}
+
+func (p *ProxyService) buildUpstreamUserAgent(req *ProxyRequest) string {
+	if p.config.Subscription.UserAgent != "" {
+		return p.config.Subscription.UserAgent
+	}
+	if req != nil && req.Token != nil {
+		return "WindsurfGateway/" + stableProfileComponent("ua", req.Token, 12)
+	}
+	if req != nil && strings.TrimSpace(req.UserAgent) != "" {
+		return strings.TrimSpace(req.UserAgent)
+	}
+	return defaultGatewayUserAgent
+}
+
+func buildStableSessionID(token *database.Token) string {
+	if token == nil {
+		return ""
+	}
+	return stableProfileComponent("session", token, 64)
+}
+
+func stableProfileComponent(kind string, token *database.Token, length int) string {
+	seed := stableProfileSeed(token)
+	sum := sha256.Sum256([]byte(kind + "|" + seed))
+	value := hex.EncodeToString(sum[:])
+	if length > 0 && length < len(value) {
+		return value[:length]
+	}
+	return value
+}
+
+func stableProfileSeed(token *database.Token) string {
+	if token == nil {
+		return ""
+	}
+
+	parts := []string{token.ID, token.Name, token.TenantAddress}
+	if token.Email != nil && strings.TrimSpace(*token.Email) != "" {
+		parts = append(parts, strings.ToLower(strings.TrimSpace(*token.Email)))
+	}
+	return strings.Join(parts, "|")
 }
 
 func (p *ProxyService) buildTargetURL(tenantAddress, path string) (string, error) {
@@ -360,15 +428,16 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 		httpReq.Header.Set("Host", parsedTarget.Host)
 	}
 
-	userAgent := strings.TrimSpace(req.UserAgent)
-	if userAgent == "" && p.config.Subscription.UserAgent != "" {
-		userAgent = p.config.Subscription.UserAgent
-	}
+	userAgent := p.buildUpstreamUserAgent(req)
 	if userAgent != "" {
 		httpReq.Header.Set("User-Agent", userAgent)
 	}
 
-	if req.ClientIP != "" {
+	if req.Token != nil {
+		httpReq.Header.Set("X-Request-Session-Id", buildStableSessionID(req.Token))
+	}
+
+	if !p.config.Proxy.PrivacyMode && req.ClientIP != "" {
 		httpReq.Header.Set("X-Real-IP", req.ClientIP)
 		existing := strings.TrimSpace(req.Headers.Get("X-Forwarded-For"))
 		if existing != "" {
@@ -383,7 +452,7 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 
 func (p *ProxyService) shouldSkipRequestHeader(key string) bool {
 	switch strings.ToLower(key) {
-	case "authorization", "x-api-key", "host", "proxy-connection", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "connection", "x-forwarded-for", "x-real-ip":
+	case "authorization", "x-api-key", "host", "proxy-connection", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "connection", "x-forwarded-for", "x-real-ip", "cookie", "x-request-session-id", "origin", "referer":
 		return true
 	default:
 		return false

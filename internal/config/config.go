@@ -64,22 +64,23 @@ func (r *RedisConfig) Addr() string {
 }
 
 type SecurityConfig struct {
-	JWTSecret          string
-	JWTExpiresIn       time.Duration
+	JWTSecret           string
+	JWTExpiresIn        time.Duration
 	JWTRefreshExpiresIn time.Duration
-	AdminUsername      string
-	AdminPassword      string
-	AdminEmail         string
+	AdminUsername       string
+	AdminPassword       string
+	AdminEmail          string
 }
 
 type ProxyConfig struct {
-	Timeout              time.Duration
-	MaxIdleConns         int
-	MaxIdleConnsPerHost  int
-	IdleConnTimeout      time.Duration
-	ForwardDisabled      bool
+	Timeout               time.Duration
+	MaxIdleConns          int
+	MaxIdleConnsPerHost   int
+	IdleConnTimeout       time.Duration
+	ForwardDisabled       bool
 	EnableCustomUserAgent bool
-	ScheduleTaskEnabled  bool
+	PrivacyMode           bool
+	ScheduleTaskEnabled   bool
 }
 
 type FrontendConfig struct {
@@ -148,13 +149,14 @@ func Load() (*Config, error) {
 			AdminEmail:          getEnv("ADMIN_EMAIL", ""),
 		},
 		Proxy: ProxyConfig{
-			Timeout:              time.Duration(getEnvInt("PROXY_TIMEOUT", 300)) * time.Second,
-			MaxIdleConns:         getEnvInt("PROXY_MAX_IDLE_CONNS", 100),
-			MaxIdleConnsPerHost:  getEnvInt("PROXY_MAX_IDLE_CONNS_PER_HOST", 10),
-			IdleConnTimeout:      time.Duration(getEnvInt("PROXY_IDLE_CONN_TIMEOUT", 90)) * time.Second,
-			ForwardDisabled:      getEnvBool("FORWARD_DISABLED", false),
+			Timeout:               time.Duration(getEnvInt("PROXY_TIMEOUT", 300)) * time.Second,
+			MaxIdleConns:          getEnvInt("PROXY_MAX_IDLE_CONNS", 100),
+			MaxIdleConnsPerHost:   getEnvInt("PROXY_MAX_IDLE_CONNS_PER_HOST", 10),
+			IdleConnTimeout:       time.Duration(getEnvInt("PROXY_IDLE_CONN_TIMEOUT", 90)) * time.Second,
+			ForwardDisabled:       getEnvBool("FORWARD_DISABLED", false),
 			EnableCustomUserAgent: getEnvBool("ENABLE_CUSTOM_USER_AGENT", false),
-			ScheduleTaskEnabled:  getEnvBool("SCHEDULE_TASK_ENABLED", true),
+			PrivacyMode:           getEnvBool("PROXY_PRIVACY_MODE", true),
+			ScheduleTaskEnabled:   getEnvBool("SCHEDULE_TASK_ENABLED", true),
 		},
 		Frontend: FrontendConfig{
 			URL:        getEnv("FRONTEND_URL", ""),

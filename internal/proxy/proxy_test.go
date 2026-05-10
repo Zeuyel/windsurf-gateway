@@ -18,6 +18,7 @@ func TestCreateRequestSkipsMalformedProtoRewrite(t *testing.T) {
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
+			PrivacyMode:         true,
 		},
 	})
 
@@ -30,9 +31,11 @@ func TestCreateRequestSkipsMalformedProtoRewrite(t *testing.T) {
 		Token:       token,
 		Method:      http.MethodPost,
 		Path:        "/exa.api_server_pb.ApiServerService/GetStatus",
-		Headers:     make(http.Header),
+		Headers:     http.Header{"Cookie": []string{"a=b"}, "X-Forwarded-For": []string{"1.2.3.4"}},
 		Body:        originalBody,
 		ContentType: "application/proto",
+		UserAgent:   "connect-go/1.18.1 (go1.26.1)",
+		ClientIP:    "127.0.0.1",
 	}, "https://server.codeium.com/exa.api_server_pb.ApiServerService/GetStatus")
 	if err != nil {
 		t.Fatalf("createRequest returned error: %v", err)
@@ -43,6 +46,21 @@ func TestCreateRequestSkipsMalformedProtoRewrite(t *testing.T) {
 	}
 	if auth := req.Header.Get("Authorization"); auth != "Bearer "+token.Token {
 		t.Fatalf("unexpected authorization header: %q", auth)
+	}
+	if got := req.Header.Get("User-Agent"); got == "" || got == "connect-go/1.18.1 (go1.26.1)" {
+		t.Fatalf("expected privacy-mode upstream user-agent, got %q", got)
+	}
+	if got := req.Header.Get("X-Request-Session-Id"); len(got) != 64 {
+		t.Fatalf("expected stable upstream session id, got %q", got)
+	}
+	if got := req.Header.Get("Cookie"); got != "" {
+		t.Fatalf("expected cookie header to be stripped, got %q", got)
+	}
+	if got := req.Header.Get("X-Forwarded-For"); got != "" {
+		t.Fatalf("expected X-Forwarded-For to be stripped in privacy mode, got %q", got)
+	}
+	if got := req.Header.Get("X-Real-Ip"); got != "" {
+		t.Fatalf("expected X-Real-IP to be stripped in privacy mode, got %q", got)
 	}
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
