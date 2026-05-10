@@ -452,10 +452,6 @@ func (p *ProxyService) createRequest(ctx context.Context, req *ProxyRequest, tar
 		httpReq.Header.Set("User-Agent", userAgent)
 	}
 
-	if req.Token != nil {
-		httpReq.Header.Set("X-Request-Session-Id", buildStableSessionID(req.Token))
-	}
-
 	if !p.config.Proxy.PrivacyMode && req.ClientIP != "" {
 		httpReq.Header.Set("X-Real-IP", req.ClientIP)
 		existing := strings.TrimSpace(req.Headers.Get("X-Forwarded-For"))

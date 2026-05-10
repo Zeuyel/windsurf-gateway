@@ -15,16 +15,16 @@
         <div class="panel-header">
           <span>Backend Token 池</span>
           <div class="header-actions">
-            <el-button :loading="syncingAllQuota" @click="syncAllQuota">同步全部额度</el-button>
-            <el-button @click="openSmartDialog">Smart Login 导入</el-button>
-            <el-button type="primary" @click="openCreateDialog">添加 Token</el-button>
+            <el-button size="small" :loading="syncingAllQuota" @click="syncAllQuota">同步全部额度</el-button>
+            <el-button size="small" @click="openSmartDialog">Smart Login 导入</el-button>
+            <el-button size="small" type="primary" @click="openCreateDialog">添加 Token</el-button>
           </div>
         </div>
       </template>
 
       <div class="sync-tip">
-        Backend Token 的 Windsurf 配额会在客户端命中 `GetUserStatus` 时被动刷新。
-        后台不会再主动构造 `GetUserStatus` 请求；如果需要刷新，请让真实 Windsurf 客户端经过 Gateway 完成一次启动/状态请求。
+        Backend Token 的 Windsurf 配额可手动同步，也会在真实客户端命中 `GetUserStatus` 时被动刷新。
+        手动同步使用 Windsurf 的 `GetPlanStatus` 配额端点；模型调度只按真实 Windsurf 日/周额度判断，不按请求次数上限判断。
       </div>
 
       <el-form :inline="true" :model="filters" class="filters">
@@ -73,29 +73,29 @@
         <el-table-column label="套餐/额度" min-width="220">
           <template #default="{ row }">
             <div class="quota-cell">
-              <div class="quota-plan">{{ row.plan_name || '未同步 Windsurf 配额' }}</div>
+              <div class="quota-plan">{{ quotaPlanName(row) }}</div>
               <div v-for="line in quotaCreditLines(row)" :key="line" class="quota-sub">{{ line }}</div>
               <div class="quota-meta">
-                同步时间 {{ formatTime(row.quota_updated_at) }}
-                <span v-if="!row.quota_updated_at">，正常登录时会被动同步</span>
+                同步时间 {{ formatQuotaUpdatedAt(row) }}
+                <span v-if="!hasQuotaSnapshot(row)">，可手动同步，也会在正常登录时被动同步</span>
               </div>
             </div>
           </template>
         </el-table-column>
         <el-table-column label="日/周剩余" min-width="120">
           <template #default="{ row }">
-            <div class="quota-sub">日 {{ formatQuotaPercent(row.daily_quota_remaining_percent, row.hide_daily_quota, row.quota_updated_at) }}</div>
-            <div class="quota-sub">周 {{ formatQuotaPercent(row.weekly_quota_remaining_percent, row.hide_weekly_quota, row.quota_updated_at) }}</div>
+            <div class="quota-sub">日 {{ formatQuotaPercent(row, 'daily') }}</div>
+            <div class="quota-sub">周 {{ formatQuotaPercent(row, 'weekly') }}</div>
           </template>
         </el-table-column>
         <el-table-column label="重置时间" min-width="180">
           <template #default="{ row }">
-            <div class="quota-sub">日 {{ formatQuotaReset(row.daily_quota_reset_at, row.hide_daily_quota, row.quota_updated_at) }}</div>
-            <div class="quota-sub">周 {{ formatQuotaReset(row.weekly_quota_reset_at, row.hide_weekly_quota, row.quota_updated_at) }}</div>
+            <div class="quota-sub">日 {{ formatQuotaReset(row, 'daily') }}</div>
+            <div class="quota-sub">周 {{ formatQuotaReset(row, 'weekly') }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="请求计数" min-width="120">
-          <template #default="{ row }">{{ row.used_requests }} / {{ row.max_requests || '∞' }}</template>
+        <el-table-column label="累计请求" min-width="100">
+          <template #default="{ row }">{{ row.used_requests }}</template>
         </el-table-column>
         <el-table-column prop="total_successes" label="成功" width="90" />
         <el-table-column prop="total_failures" label="失败" width="90" />
@@ -107,13 +107,13 @@
         <el-table-column prop="last_used_at" label="最近使用" min-width="170">
           <template #default="{ row }">{{ formatTime(row.last_used_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="132">
+        <el-table-column label="操作" fixed="right" width="118">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
+              <el-button size="small" text bg class="action-btn action-btn--edit" @click="openEditDialog(row)">编辑</el-button>
               <el-dropdown @command="(command) => handleRowCommand(row, command)">
-                <el-button size="small" :loading="syncingTokenId === row.id">
-                  操作
+                <el-button size="small" text bg class="action-btn action-btn--more" :loading="syncingTokenId === row.id">
+                  更多
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
@@ -180,11 +180,6 @@
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12">
-            <el-form-item label="手动上限">
-              <el-input-number v-model="form.max_requests" :min="0" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12">
             <el-form-item label="过期时间">
               <el-date-picker
                 v-model="form.expires_at"
@@ -247,11 +242,6 @@
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12">
-            <el-form-item label="手动上限">
-              <el-input-number v-model="smartForm.max_requests" :min="0" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12">
             <el-form-item label="Proxy URL">
               <el-input v-model="smartForm.proxy_url" placeholder="可选" />
             </el-form-item>
@@ -311,7 +301,6 @@ const form = reactive({
   tenant_address: 'https://server.codeium.com',
   proxy_url: '',
   weight: 1,
-  max_requests: 0,
   expires_at: '',
 })
 
@@ -323,7 +312,6 @@ const smartForm = reactive({
   description: '',
   proxy_url: '',
   weight: 1,
-  max_requests: 0,
 })
 
 const rules = {
@@ -356,7 +344,7 @@ const tokenCards = computed(() => [
   {
     label: '活跃并发',
     value: tokenStats.value.total_active_requests || 0,
-    meta: `已耗尽 ${tokenStats.value.exhausted || 0}`,
+    meta: `冷却 ${tokenStats.value.cooldown || 0}`,
   },
 ])
 
@@ -400,7 +388,7 @@ const syncQuota = async (row) => {
   try {
     const res = await client.post(`/tokens/${row.id}/sync-quota`)
     if (res.data.code === 200) {
-      ElMessage.success(res.data.msg || '已刷新本地 Token 状态，等待真实客户端被动同步额度')
+      ElMessage.success(res.data.msg || '已通过 GetPlanStatus 同步额度')
       await loadAll()
     } else {
       ElMessage.error(res.data.msg || '同步额度失败')
@@ -419,7 +407,7 @@ const syncAllQuota = async () => {
     if (res.data.code === 200) {
       const success = res.data.data?.success || 0
       const failed = res.data.data?.failed || 0
-      ElMessage.success(res.data.msg || `已刷新 ${success} 个 Token 状态，失败 ${failed} 个；额度等待真实客户端被动同步`)
+      ElMessage.success(res.data.msg || `已通过 GetPlanStatus 同步 ${success} 个 Token，失败 ${failed} 个`)
       await loadAll()
     } else {
       ElMessage.error(res.data.msg || '批量同步额度失败')
@@ -446,7 +434,6 @@ const resetForm = () => {
     tenant_address: 'https://server.codeium.com',
     proxy_url: '',
     weight: 1,
-    max_requests: 0,
     expires_at: '',
   })
 }
@@ -460,7 +447,6 @@ const resetSmartForm = () => {
     description: '',
     proxy_url: '',
     weight: 1,
-    max_requests: 0,
   })
   smartOrgOptions.value = []
   smartHint.value = ''
@@ -488,7 +474,6 @@ const openEditDialog = (row) => {
     tenant_address: row.tenant_address,
     proxy_url: row.proxy_url || '',
     weight: row.weight || 1,
-    max_requests: row.max_requests || 0,
     expires_at: row.expires_at ? dayjs(row.expires_at).format('YYYY-MM-DD HH:mm:ss') : '',
   })
   dialogVisible.value = true
@@ -649,6 +634,10 @@ const formatCreditUsage = (used, available, total) => {
 }
 
 const quotaCreditLines = (row) => {
+  if (!hasQuotaSnapshot(row)) {
+    return ['尚未同步额度']
+  }
+
   const lines = []
   const prompt = formatCreditUsage(row.used_prompt_credits, row.available_prompt_credits, row.monthly_prompt_credits)
   const flow = formatCreditUsage(row.used_flow_credits, row.available_flow_credits, row.monthly_flow_credits)
@@ -658,17 +647,25 @@ const quotaCreditLines = (row) => {
   if (flow) lines.push(`Flow ${flow}`)
   if (flex) lines.push(`Flex ${flex}`)
 
-  return lines.length > 0 ? lines : ['尚未从 GetUserStatus 同步额度']
+  return lines.length > 0 ? lines : ['未返回 credit 明细']
 }
 
-const formatQuotaPercent = (value, hidden, quotaUpdatedAt) => {
-  if (!quotaUpdatedAt) return '-'
+const hasQuotaSnapshot = (row) => Boolean(row?.quota_updated_at)
+const quotaPlanName = (row) => (hasQuotaSnapshot(row) ? (row.plan_name || 'Windsurf 配额') : '未同步 Windsurf 配额')
+const formatQuotaUpdatedAt = (row) => (hasQuotaSnapshot(row) ? formatTime(row.quota_updated_at) : '-')
+
+const formatQuotaPercent = (row, kind) => {
+  if (!hasQuotaSnapshot(row)) return '-'
+  const hidden = kind === 'daily' ? row.hide_daily_quota : row.hide_weekly_quota
+  const value = kind === 'daily' ? row.daily_quota_remaining_percent : row.weekly_quota_remaining_percent
   if (hidden) return '隐藏'
   return `${Number(value || 0)}%`
 }
 
-const formatQuotaReset = (value, hidden, quotaUpdatedAt) => {
-  if (!quotaUpdatedAt) return '-'
+const formatQuotaReset = (row, kind) => {
+  if (!hasQuotaSnapshot(row)) return '-'
+  const hidden = kind === 'daily' ? row.hide_daily_quota : row.hide_weekly_quota
+  const value = kind === 'daily' ? row.daily_quota_reset_at : row.weekly_quota_reset_at
   if (hidden) return '隐藏'
   return formatTime(value)
 }
@@ -772,7 +769,28 @@ code {
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.action-btn {
+  min-width: 42px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.action-btn--edit {
+  color: #2563eb;
+}
+
+.action-btn--more {
+  color: #475569;
+}
+
+.header-actions :deep(.el-button) {
+  border-radius: 10px;
+  padding-inline: 14px;
 }
 
 .smart-alert {

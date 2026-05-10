@@ -58,6 +58,37 @@ func TestParseUserStatusQuota(t *testing.T) {
 	}
 }
 
+func TestParsePlanStatusQuota(t *testing.T) {
+	planInfo := protoMessage(
+		protoStringField(planInfoFieldPlanName, "Windsurf Pro"),
+		protoVarintField(planInfoFieldMonthlyPromptCredits, 500),
+		protoVarintField(planInfoFieldMonthlyFlowCredits, 50),
+		protoVarintField(planInfoFieldMonthlyFlexCredits, 10),
+	)
+	planStatus := protoMessage(
+		protoBytesField(planStatusFieldPlanInfo, planInfo),
+		protoVarintField(planStatusFieldAvailablePrompt, 320),
+		protoVarintField(planStatusFieldUsedPrompt, 180),
+		protoVarintField(planStatusFieldDailyRemainingPct, 72),
+		protoVarintField(planStatusFieldWeeklyRemainingPct, 54),
+	)
+	response := protoMessage(protoBytesField(getPlanStatusResponseFieldPlanStatus, planStatus))
+
+	snapshot, err := parsePlanStatusQuota(response)
+	if err != nil {
+		t.Fatalf("parsePlanStatusQuota returned error: %v", err)
+	}
+	if snapshot.PlanName != "Windsurf Pro" {
+		t.Fatalf("unexpected plan name: %q", snapshot.PlanName)
+	}
+	if snapshot.AvailablePromptCredits != 320 || snapshot.UsedPromptCredits != 180 {
+		t.Fatalf("unexpected prompt credits: available=%d used=%d", snapshot.AvailablePromptCredits, snapshot.UsedPromptCredits)
+	}
+	if snapshot.DailyQuotaRemainingPercent != 72 || snapshot.WeeklyQuotaRemainingPercent != 54 {
+		t.Fatalf("unexpected quota percentages: daily=%d weekly=%d", snapshot.DailyQuotaRemainingPercent, snapshot.WeeklyQuotaRemainingPercent)
+	}
+}
+
 func TestDecodeUserStatusResponseBodyHandlesGzip(t *testing.T) {
 	payload := protoMessage(protoBytesField(getUserStatusResponseFieldUserStatus, protoMessage()))
 

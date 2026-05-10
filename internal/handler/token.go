@@ -148,7 +148,7 @@ func (h *TokenHandler) SyncQuota(c *gin.Context) {
 		Error(c, 500, err.Error())
 		return
 	}
-	SuccessWithMsg(c, service.QuotaSyncPassiveMessage(), token)
+	SuccessWithMsg(c, "已通过 GetPlanStatus 同步 Windsurf 配额", token)
 }
 
 func (h *TokenHandler) SyncAllQuota(c *gin.Context) {
@@ -157,7 +157,7 @@ func (h *TokenHandler) SyncAllQuota(c *gin.Context) {
 		Error(c, 500, err.Error())
 		return
 	}
-	SuccessWithMsg(c, service.QuotaSyncPassiveMessage(), gin.H{
+	SuccessWithMsg(c, "已通过 GetPlanStatus 同步 Windsurf 配额", gin.H{
 		"success":  success,
 		"failed":   failed,
 		"messages": messages,

@@ -66,3 +66,22 @@ func TestTokenHasGatewayQuotaAvailable(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenRequestCountDoesNotExhaustToken(t *testing.T) {
+	token := Token{
+		Status:       "active",
+		PoolStatus:   "available",
+		MaxRequests:  1,
+		UsedRequests: 10,
+	}
+
+	if token.IsExhausted() {
+		t.Fatal("request counters should not exhaust backend tokens")
+	}
+	if !token.IsActive() {
+		t.Fatal("request counters should not make backend tokens inactive")
+	}
+	if !token.IsReadyForScheduling(time.Now()) {
+		t.Fatal("request counters should not block scheduling")
+	}
+}

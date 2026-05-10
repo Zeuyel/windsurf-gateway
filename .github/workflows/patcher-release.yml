@@ -30,7 +30,7 @@ jobs:
             archive: tar.gz
           - goos: windows
             goarch: amd64
-            archive: zip
+            archive: exe
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,8 +55,8 @@ jobs:
           out_path="dist/bin/${bin_name}"
           go build -trimpath -ldflags "-s -w" -o "${out_path}" ./cmd/windsurf-patcher
           pkg_base="windsurf-patcher_${GOOS}_${GOARCH}"
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd dist/bin && zip -9 "../pkg/${pkg_base}.zip" "${bin_name}")
+          if [ "${{ matrix.archive }}" = "exe" ]; then
+            cp "${out_path}" "dist/pkg/${pkg_base}.exe"
           else
             tar -C dist/bin -czf "dist/pkg/${pkg_base}.tar.gz" "${bin_name}"
           fi

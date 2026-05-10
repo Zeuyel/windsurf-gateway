@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -86,6 +87,31 @@ func TestClassifyProxyOutcomeOptional401DoesNotPenalizeToken(t *testing.T) {
 			}
 			if outcome.FailureCategory != "optional_upstream_401" {
 				t.Fatalf("unexpected failure category: %s", outcome.FailureCategory)
+			}
+		})
+	}
+}
+
+func TestClassifyProxyOutcomeTransportErrorsDoNotCooldownToken(t *testing.T) {
+	errs := []error{
+		errors.New(`forward request: Post "https://server.codeium.com/exa.api_server_pb.ApiServerService/Ping": read tcp 198.18.0.1:59826->35.223.238.178:443: wsarecv: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.`),
+		errors.New(`forward request: Post "https://server.codeium.com/exa.auth_pb.AuthService/GetUserJwt": context deadline exceeded`),
+		errors.New(`forward request: Post "https://server.codeium.com/exa.product_analytics_pb.ProductAnalyticsService/RecordAnalyticsEvent": dial tcp: lookup server.codeium.com: no such host`),
+	}
+
+	for _, err := range errs {
+		t.Run(err.Error(), func(t *testing.T) {
+			outcome := classifyProxyOutcome("/exa.api_server_pb.ApiServerService/Ping", &proxy.ProxyResponse{
+				StatusCode: http.StatusBadGateway,
+			}, err)
+			if outcome.Penalize {
+				t.Fatalf("transport error should not penalize backend token: %+v", outcome)
+			}
+			if outcome.Cooldown != 0 {
+				t.Fatalf("transport error should not set cooldown: %+v", outcome)
+			}
+			if outcome.Success {
+				t.Fatalf("transport error should not be success: %+v", outcome)
 			}
 		})
 	}

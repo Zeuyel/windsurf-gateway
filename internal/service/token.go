@@ -162,9 +162,6 @@ func (s *TokenService) ValidateToken(tokenStr string) (*database.Token, error) {
 	if token.PoolStatus == TokenPoolExpired || token.IsExpired() {
 		return nil, errors.New("token has expired")
 	}
-	if token.PoolStatus == TokenPoolExhausted || token.IsExhausted() {
-		return nil, errors.New("token quota exhausted")
-	}
 	return &token, nil
 }
 
@@ -174,6 +171,7 @@ func (s *TokenService) BatchImport(tokens []database.Token) (int, int, error) {
 
 	for i := range tokens {
 		tokens[i].ID = uuid.New().String()[:20]
+		tokens[i].MaxRequests = 0
 		now := time.Now()
 		tokens[i].Status, tokens[i].PoolStatus = normalizeTokenState(&tokens[i], now)
 		if tokens[i].Weight <= 0 {
@@ -195,7 +193,7 @@ func (s *TokenService) GetStats() (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	var total, active, expired, disabled, available, cooldown, exhausted int64
+	var total, active, expired, disabled, available, cooldown int64
 	var quotaSynced, lowDailyQuota, lowWeeklyQuota int64
 	var totalActiveRequests int64
 
@@ -205,7 +203,6 @@ func (s *TokenService) GetStats() (map[string]interface{}, error) {
 	s.db.Model(&database.Token{}).Where("status = ?", TokenStatusDisabled).Count(&disabled)
 	s.db.Model(&database.Token{}).Where("pool_status = ?", TokenPoolAvailable).Count(&available)
 	s.db.Model(&database.Token{}).Where("pool_status = ?", TokenPoolCooldown).Count(&cooldown)
-	s.db.Model(&database.Token{}).Where("pool_status = ?", TokenPoolExhausted).Count(&exhausted)
 	s.db.Model(&database.Token{}).Where("quota_updated_at IS NOT NULL").Count(&quotaSynced)
 	s.db.Model(&database.Token{}).
 		Where("quota_updated_at IS NOT NULL AND hide_daily_quota = ? AND daily_quota_remaining_percent <= ?", false, 20).
@@ -222,7 +219,7 @@ func (s *TokenService) GetStats() (map[string]interface{}, error) {
 		"disabled":              disabled,
 		"available":             available,
 		"cooldown":              cooldown,
-		"exhausted":             exhausted,
+		"exhausted":             int64(0),
 		"quota_synced":          quotaSynced,
 		"low_daily_quota":       lowDailyQuota,
 		"low_weekly_quota":      lowWeeklyQuota,
@@ -273,6 +270,14 @@ func (s *TokenService) RefreshTokenStates() error {
 		if tokens[i].PoolStatus != poolStatus {
 			updates["pool_status"] = poolStatus
 		}
+		if tokens[i].MaxRequests != 0 {
+			updates["max_requests"] = 0
+		}
+		if isEmptyQuotaSnapshot(&tokens[i]) {
+			for key, value := range emptyQuotaSnapshotUpdates() {
+				updates[key] = value
+			}
+		}
 		if len(updates) == 0 {
 			continue
 		}
@@ -297,6 +302,14 @@ func (s *TokenService) RefreshTokenStateByID(id string) error {
 	}
 	if token.PoolStatus != poolStatus {
 		updates["pool_status"] = poolStatus
+	}
+	if token.MaxRequests != 0 {
+		updates["max_requests"] = 0
+	}
+	if isEmptyQuotaSnapshot(&token) {
+		for key, value := range emptyQuotaSnapshotUpdates() {
+			updates[key] = value
+		}
 	}
 	if len(updates) == 0 {
 		return nil
@@ -342,7 +355,7 @@ func (s *TokenService) CreateToken(req *TokenCreateRequest) (*database.Token, er
 		Description:   req.Description,
 		TenantAddress: tenantAddress,
 		ProxyURL:      proxyURL,
-		MaxRequests:   req.MaxRequests,
+		MaxRequests:   0,
 		Weight:        weight,
 		IsShared:      &isShared,
 		Email:         email,
@@ -382,8 +395,6 @@ func normalizeTokenState(token *database.Token, now time.Time) (string, string) 
 		return TokenStatusDisabled, TokenPoolDisabled
 	case token.ExpiresAt != nil && token.ExpiresAt.Before(now):
 		return TokenStatusExpired, TokenPoolExpired
-	case token.MaxRequests > 0 && token.UsedRequests >= token.MaxRequests:
-		return TokenStatusActive, TokenPoolExhausted
 	case token.CooldownUntil != nil && token.CooldownUntil.After(now):
 		return TokenStatusActive, TokenPoolCooldown
 	default:
@@ -402,8 +413,10 @@ func normalizeTokenUpdates(updates map[string]interface{}) (map[string]interface
 				return nil, err
 			}
 			normalized[key] = expiresAt
-		case "weight", "max_requests", "used_requests", "active_requests", "consecutive_failures", "last_status_code":
+		case "weight", "used_requests", "active_requests", "consecutive_failures", "last_status_code":
 			normalized[key] = normalizeInt(value)
+		case "max_requests":
+			normalized[key] = 0
 		case "status":
 			status := strings.TrimSpace(fmt.Sprintf("%v", value))
 			if status != "" && status != TokenStatusActive && status != TokenStatusDisabled && status != TokenStatusExpired {

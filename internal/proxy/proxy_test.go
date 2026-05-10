@@ -59,8 +59,8 @@ func TestCreateRequestSkipsMalformedProtoRewrite(t *testing.T) {
 	if got := req.Header.Get("Referer"); got != "" {
 		t.Fatalf("expected Referer header to remain absent, got %q", got)
 	}
-	if got := req.Header.Get("X-Request-Session-Id"); len(got) != 64 {
-		t.Fatalf("expected stable upstream session id, got %q", got)
+	if got := req.Header.Get("X-Request-Session-Id"); got != "" {
+		t.Fatalf("expected gateway-only session header to be stripped, got %q", got)
 	}
 	if got := req.Header.Get("Cookie"); got != "" {
 		t.Fatalf("expected cookie header to be stripped, got %q", got)

@@ -387,14 +387,14 @@ func classifyProxyOutcome(requestPath string, resp *proxy.ProxyResponse, err err
 			outcome.FailureCategory = "client_disconnected"
 			outcome.Success = false
 			outcome.Penalize = false
-		case strings.Contains(lower, "timeout"):
+		case isTransientTransportError(lower):
 			outcome.FailureCategory = "transport_timeout"
-			outcome.Penalize = true
-			outcome.Cooldown = 2 * time.Minute
+			outcome.Success = false
+			outcome.Penalize = false
 		default:
 			outcome.FailureCategory = "transport_error"
-			outcome.Penalize = true
-			outcome.Cooldown = 5 * time.Minute
+			outcome.Success = false
+			outcome.Penalize = false
 		}
 		if outcome.StatusCode == 0 {
 			outcome.StatusCode = http.StatusBadGateway
@@ -448,6 +448,27 @@ func classifyProxyOutcome(requestPath string, resp *proxy.ProxyResponse, err err
 		outcome.Success = true
 	}
 	return outcome
+}
+
+func isTransientTransportError(message string) bool {
+	for _, marker := range []string{
+		"timeout",
+		"deadline exceeded",
+		"connection attempt failed",
+		"failed to respond",
+		"wsarecv",
+		"dial tcp",
+		"i/o timeout",
+		"tls handshake timeout",
+		"connection refused",
+		"network is unreachable",
+		"no such host",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldCaptureUpstreamResponseBody(requestPath string) bool {

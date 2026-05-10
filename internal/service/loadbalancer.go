@@ -416,9 +416,6 @@ func tokenIneligibilityReasons(token *database.Token, now time.Time, policy Toke
 	if token.ExpiresAt != nil && token.ExpiresAt.Before(now) {
 		reasons = append(reasons, "expired")
 	}
-	if token.MaxRequests > 0 && token.UsedRequests >= token.MaxRequests {
-		reasons = append(reasons, "max_requests_reached")
-	}
 	if token.CooldownUntil != nil && token.CooldownUntil.After(now) {
 		reasons = append(reasons, "cooldown")
 	}

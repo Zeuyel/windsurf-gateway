@@ -15,6 +15,7 @@ import (
 const (
 	getUserStatusResponseFieldUserStatus = 1
 	getUserStatusResponseFieldPlanInfo   = 2
+	getPlanStatusResponseFieldPlanStatus = 1
 	userStatusFieldPlanStatus            = 13
 	planStatusFieldPlanInfo              = 1
 	planStatusFieldAvailableFlex         = 4
@@ -71,6 +72,30 @@ func (s *TokenService) UpdateQuotaFromGetUserStatusResponse(tokenID string, head
 		return fmt.Errorf("GetUserStatus response did not contain quota fields")
 	}
 
+	return s.updateQuotaSnapshot(tokenID, snapshot)
+}
+
+func (s *TokenService) UpdateQuotaFromGetPlanStatusResponse(tokenID string, headers http.Header, payload []byte) error {
+	if strings.TrimSpace(tokenID) == "" || len(payload) == 0 {
+		return nil
+	}
+
+	decoded, err := decodeUserStatusResponseBody(headers, payload)
+	if err != nil {
+		return err
+	}
+	snapshot, err := parsePlanStatusQuota(decoded)
+	if err != nil {
+		return err
+	}
+	if !snapshot.hasQuotaData() {
+		return fmt.Errorf("GetPlanStatus response did not contain quota fields")
+	}
+
+	return s.updateQuotaSnapshot(tokenID, snapshot)
+}
+
+func (s *TokenService) updateQuotaSnapshot(tokenID string, snapshot *TokenQuotaSnapshot) error {
 	now := time.Now()
 	updates := map[string]interface{}{
 		"plan_name":                      snapshot.PlanName,
@@ -196,6 +221,55 @@ func parseUserStatusQuota(data []byte) (*TokenQuotaSnapshot, error) {
 		}
 		if idx > len(data) {
 			return nil, fmt.Errorf("GetUserStatusResponse parse overflow")
+		}
+	}
+	return snapshot, nil
+}
+
+func parsePlanStatusQuota(data []byte) (*TokenQuotaSnapshot, error) {
+	snapshot := &TokenQuotaSnapshot{}
+	idx := 0
+	for idx < len(data) {
+		tag, consumed, ok := decodeVarint(data, idx)
+		if !ok {
+			return nil, fmt.Errorf("decode GetPlanStatusResponse tag failed")
+		}
+		idx += consumed
+
+		fieldNumber := int(tag >> 3)
+		wireType := int(tag & 0x7)
+		switch wireType {
+		case 0:
+			_, width, ok := decodeVarint(data, idx)
+			if !ok {
+				return nil, fmt.Errorf("decode GetPlanStatusResponse field %d failed", fieldNumber)
+			}
+			idx += width
+		case 2:
+			length, width, ok := decodeVarint(data, idx)
+			if !ok {
+				return nil, fmt.Errorf("decode GetPlanStatusResponse field %d length failed", fieldNumber)
+			}
+			idx += width
+			end := idx + int(length)
+			if end > len(data) {
+				return nil, fmt.Errorf("GetPlanStatusResponse field %d exceeds payload", fieldNumber)
+			}
+			if fieldNumber == getPlanStatusResponseFieldPlanStatus {
+				if err := parsePlanStatus(data[idx:end], snapshot); err != nil {
+					return nil, err
+				}
+			}
+			idx = end
+		case 1:
+			idx += 8
+		case 5:
+			idx += 4
+		default:
+			return nil, fmt.Errorf("unsupported GetPlanStatusResponse wire type %d", wireType)
+		}
+		if idx > len(data) {
+			return nil, fmt.Errorf("GetPlanStatusResponse parse overflow")
 		}
 	}
 	return snapshot, nil

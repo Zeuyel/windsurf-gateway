@@ -80,7 +80,7 @@ type Token struct {
 	Status                      string         `gorm:"size:20;default:active;index" json:"status"`
 	PoolStatus                  string         `gorm:"size:20;default:available;index" json:"pool_status"`
 	Weight                      int            `gorm:"default:1" json:"weight"`
-	MaxRequests                 int            `gorm:"default:30000" json:"max_requests"`
+	MaxRequests                 int            `gorm:"default:0" json:"max_requests"`
 	UsedRequests                int            `gorm:"default:0" json:"used_requests"`
 	PlanName                    string         `gorm:"size:100" json:"plan_name"`
 	MonthlyPromptCredits        int            `gorm:"default:0" json:"monthly_prompt_credits"`
@@ -129,7 +129,7 @@ func (t *Token) IsDisabled() bool {
 }
 
 func (t *Token) IsExhausted() bool {
-	return t.MaxRequests > 0 && t.UsedRequests >= t.MaxRequests
+	return false
 }
 
 func (t *Token) IsCoolingDown() bool {
@@ -140,7 +140,7 @@ func (t *Token) IsActive() bool {
 	if t.Status != "active" {
 		return false
 	}
-	if t.IsExpired() || t.IsExhausted() {
+	if t.IsExpired() {
 		return false
 	}
 	return true
@@ -151,9 +151,6 @@ func (t *Token) IsReadyForScheduling(now time.Time) bool {
 		return false
 	}
 	if t.ExpiresAt != nil && t.ExpiresAt.Before(now) {
-		return false
-	}
-	if t.MaxRequests > 0 && t.UsedRequests >= t.MaxRequests {
 		return false
 	}
 	if t.CooldownUntil != nil && t.CooldownUntil.After(now) {
