@@ -1,39 +1,14 @@
 package service
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"net/http"
-	"net/url"
-	"runtime"
-	"strings"
-	"time"
 
 	"windsurf-gateway/internal/database"
 )
 
-const (
-	quotaSyncRequestPath       = "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
-	quotaSyncProtoType         = "application/proto"
-	quotaSyncRequestTimeout    = 30 * time.Second
-	quotaSyncGatewayUserAgent  = "connect-go/1.18.1 (go1.26.1)"
-	quotaSyncGatewayIDEName    = "windsurf"
-	quotaSyncGatewayExtName    = "windsurf-gateway"
-	quotaSyncGatewayExtVer     = "quota-sync"
-	quotaSyncGatewayLocale     = "zh-CN"
-	quotaSyncAuthSourceCodeium = 0
-)
+const quotaSyncPassiveMessage = "主动构造 GetUserStatus 请求已禁用；Windsurf 配额会在真实客户端经过 Gateway 调用 GetUserStatus 成功后被动更新"
 
 func (s *TokenService) SyncQuotaSnapshot(id string) (*database.Token, error) {
-	token, err := s.GetByID(id)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.syncQuotaSnapshotForToken(token); err != nil {
-		return nil, err
-	}
 	return s.GetByID(id)
 }
 
@@ -43,174 +18,13 @@ func (s *TokenService) SyncAllQuotaSnapshots() (int, int, []string, error) {
 		return 0, 0, nil, err
 	}
 
-	success := 0
-	failed := 0
 	messages := make([]string, 0, len(tokens))
-
 	for i := range tokens {
-		if err := s.syncQuotaSnapshotForToken(&tokens[i]); err != nil {
-			failed++
-			messages = append(messages, fmt.Sprintf("%s: %v", tokens[i].Name, err))
-			continue
-		}
-		success++
+		messages = append(messages, fmt.Sprintf("%s: %s", tokens[i].Name, quotaSyncPassiveMessage))
 	}
-
-	return success, failed, messages, nil
+	return len(tokens), 0, messages, nil
 }
 
-func (s *TokenService) syncQuotaSnapshotForToken(token *database.Token) error {
-	headers, payload, err := s.fetchUserStatusSnapshot(token)
-	if err != nil {
-		return err
-	}
-	return s.UpdateQuotaFromGetUserStatusResponse(token.ID, headers, payload)
+func QuotaSyncPassiveMessage() string {
+	return quotaSyncPassiveMessage
 }
-
-func (s *TokenService) fetchUserStatusSnapshot(token *database.Token) (http.Header, []byte, error) {
-	if token == nil {
-		return nil, nil, fmt.Errorf("token is required")
-	}
-	if strings.TrimSpace(token.Token) == "" {
-		return nil, nil, fmt.Errorf("backend token is empty")
-	}
-
-	targetURL, err := buildQuotaSyncTargetURL(token.TenantAddress)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	client, err := newTokenQuotaHTTPClient(token, quotaSyncRequestTimeout)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	body := buildQuotaSyncUserStatusBody(token)
-
-	resp, err := doRequestWithRetry(client, 2, func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", quotaSyncProtoType)
-		req.Header.Set("Accept-Encoding", "gzip")
-		req.Header.Set("Authorization", "Bearer "+token.Token)
-		req.Header.Set("X-Api-Key", token.Token)
-		req.Header.Set("User-Agent", quotaSyncGatewayUserAgent)
-		req.Header.Set("X-Request-Session-Id", buildQuotaSyncStableComponent("session", token))
-		return req, nil
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("request GetUserStatus failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	payload, err := ioReadAll(resp)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read GetUserStatus response failed: %w", err)
-	}
-	if !isSuccessStatus(resp.StatusCode) {
-		return nil, nil, fmt.Errorf("GetUserStatus failed(%d)", resp.StatusCode)
-	}
-
-	return resp.Header.Clone(), payload, nil
-}
-
-func buildQuotaSyncTargetURL(tenantAddress string) (string, error) {
-	tenantAddress = strings.TrimSpace(tenantAddress)
-	if tenantAddress == "" {
-		return "", fmt.Errorf("tenant address is empty")
-	}
-	if !strings.HasPrefix(tenantAddress, "http://") && !strings.HasPrefix(tenantAddress, "https://") {
-		tenantAddress = "https://" + tenantAddress
-	}
-
-	baseURL, err := url.Parse(tenantAddress)
-	if err != nil {
-		return "", fmt.Errorf("invalid tenant address: %w", err)
-	}
-
-	basePath := strings.TrimSuffix(baseURL.Path, "/")
-	targetPath := quotaSyncRequestPath
-	if basePath != "" {
-		targetPath = basePath + quotaSyncRequestPath
-	}
-
-	return (&url.URL{
-		Scheme: baseURL.Scheme,
-		Host:   baseURL.Host,
-		Path:   targetPath,
-	}).String(), nil
-}
-
-func newTokenQuotaHTTPClient(token *database.Token, timeout time.Duration) (*http.Client, error) {
-	client := newExternalHTTPClient(timeout)
-	if token == nil || token.ProxyURL == nil || strings.TrimSpace(*token.ProxyURL) == "" {
-		return client, nil
-	}
-
-	transport, ok := client.Transport.(*http.Transport)
-	if !ok {
-		return client, nil
-	}
-	proxyURL, err := url.Parse(strings.TrimSpace(*token.ProxyURL))
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
-	}
-	transport.Proxy = http.ProxyURL(proxyURL)
-	return client, nil
-}
-
-func buildQuotaSyncUserStatusBody(token *database.Token) []byte {
-	request := make([]byte, 0, 256)
-	appendProtoBytesField(&request, topLevelMetadataFieldNumber, buildQuotaSyncMetadata(token))
-	return request
-}
-
-func buildQuotaSyncMetadata(token *database.Token) []byte {
-	metadata := make([]byte, 0, 256)
-	appendProtoStringField(&metadata, metadataFieldIDEName, quotaSyncGatewayIDEName)
-	appendProtoStringField(&metadata, metadataFieldExtensionVersion, quotaSyncGatewayExtVer)
-	appendProtoStringField(&metadata, metadataFieldAPIKey, token.Token)
-	appendProtoStringField(&metadata, metadataFieldLocale, quotaSyncGatewayLocale)
-	appendProtoStringField(&metadata, metadataFieldOS, runtime.GOOS)
-	appendProtoStringField(&metadata, metadataFieldHardware, runtime.GOARCH)
-	appendProtoBoolField(&metadata, metadataFieldDisableTelemetry, true)
-	appendProtoStringField(&metadata, metadataFieldSessionID, buildQuotaSyncStableComponent("session", token))
-	appendProtoUint64Field(&metadata, metadataFieldRequestID, uint64(time.Now().UnixNano()))
-	appendProtoStringField(&metadata, metadataFieldUserAgent, quotaSyncGatewayUserAgent)
-	appendProtoUint64Field(&metadata, metadataFieldAuthSource, quotaSyncAuthSourceCodeium)
-	appendProtoStringField(&metadata, metadataFieldExtensionName, quotaSyncGatewayExtName)
-	appendProtoStringField(&metadata, metadataFieldDeviceFingerprint, buildQuotaSyncStableComponent("device", token))
-	return metadata
-}
-
-func buildQuotaSyncStableComponent(kind string, token *database.Token) string {
-	if token == nil {
-		return ""
-	}
-	parts := []string{token.ID, token.Name, token.TenantAddress}
-	if token.Email != nil && strings.TrimSpace(*token.Email) != "" {
-		parts = append(parts, strings.ToLower(strings.TrimSpace(*token.Email)))
-	}
-	sum := sha256.Sum256([]byte(kind + "|" + strings.Join(parts, "|")))
-	return hex.EncodeToString(sum[:])
-}
-
-const (
-	topLevelMetadataFieldNumber    = 1
-	metadataFieldIDEName           = 1
-	metadataFieldExtensionVersion  = 2
-	metadataFieldAPIKey            = 3
-	metadataFieldLocale            = 4
-	metadataFieldOS                = 5
-	metadataFieldDisableTelemetry  = 6
-	metadataFieldIDEVersion        = 7
-	metadataFieldHardware          = 8
-	metadataFieldRequestID         = 9
-	metadataFieldSessionID         = 10
-	metadataFieldUserAgent         = 13
-	metadataFieldAuthSource        = 15
-	metadataFieldExtensionName     = 12
-	metadataFieldDeviceFingerprint = 24
-)

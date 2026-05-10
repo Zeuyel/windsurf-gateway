@@ -13,24 +13,26 @@ import (
 )
 
 const (
-	userStatusFieldPlanStatus         = 13
-	planStatusFieldPlanInfo           = 1
-	planStatusFieldAvailableFlex      = 4
-	planStatusFieldUsedFlow           = 5
-	planStatusFieldUsedPrompt         = 6
-	planStatusFieldUsedFlex           = 7
-	planStatusFieldAvailablePrompt    = 8
-	planStatusFieldAvailableFlow      = 9
-	planStatusFieldDailyRemainingPct  = 14
-	planStatusFieldWeeklyRemainingPct = 15
-	planStatusFieldDailyResetAtUnix   = 17
-	planStatusFieldWeeklyResetAtUnix  = 18
-	planInfoFieldPlanName             = 2
-	planInfoFieldMonthlyPromptCredits = 12
-	planInfoFieldMonthlyFlowCredits   = 13
-	planInfoFieldMonthlyFlexCredits   = 14
-	planInfoFieldHideDailyQuota       = 36
-	planInfoFieldHideWeeklyQuota      = 37
+	getUserStatusResponseFieldUserStatus = 1
+	getUserStatusResponseFieldPlanInfo   = 2
+	userStatusFieldPlanStatus            = 13
+	planStatusFieldPlanInfo              = 1
+	planStatusFieldAvailableFlex         = 4
+	planStatusFieldUsedFlow              = 5
+	planStatusFieldUsedPrompt            = 6
+	planStatusFieldUsedFlex              = 7
+	planStatusFieldAvailablePrompt       = 8
+	planStatusFieldAvailableFlow         = 9
+	planStatusFieldDailyRemainingPct     = 14
+	planStatusFieldWeeklyRemainingPct    = 15
+	planStatusFieldDailyResetAtUnix      = 17
+	planStatusFieldWeeklyResetAtUnix     = 18
+	planInfoFieldPlanName                = 2
+	planInfoFieldMonthlyPromptCredits    = 12
+	planInfoFieldMonthlyFlowCredits      = 13
+	planInfoFieldMonthlyFlexCredits      = 14
+	planInfoFieldHideDailyQuota          = 36
+	planInfoFieldHideWeeklyQuota         = 37
 )
 
 type TokenQuotaSnapshot struct {
@@ -64,6 +66,9 @@ func (s *TokenService) UpdateQuotaFromGetUserStatusResponse(tokenID string, head
 	snapshot, err := parseUserStatusQuota(decoded)
 	if err != nil {
 		return err
+	}
+	if !snapshot.hasQuotaData() {
+		return fmt.Errorf("GetUserStatus response did not contain quota fields")
 	}
 
 	now := time.Now()
@@ -148,7 +153,7 @@ func parseUserStatusQuota(data []byte) (*TokenQuotaSnapshot, error) {
 	for idx < len(data) {
 		tag, consumed, ok := decodeVarint(data, idx)
 		if !ok {
-			return nil, fmt.Errorf("decode UserStatus tag failed")
+			return nil, fmt.Errorf("decode GetUserStatusResponse tag failed")
 		}
 		idx += consumed
 
@@ -158,21 +163,26 @@ func parseUserStatusQuota(data []byte) (*TokenQuotaSnapshot, error) {
 		case 0:
 			_, width, ok := decodeVarint(data, idx)
 			if !ok {
-				return nil, fmt.Errorf("decode UserStatus field %d failed", fieldNumber)
+				return nil, fmt.Errorf("decode GetUserStatusResponse field %d failed", fieldNumber)
 			}
 			idx += width
 		case 2:
 			length, width, ok := decodeVarint(data, idx)
 			if !ok {
-				return nil, fmt.Errorf("decode UserStatus field %d length failed", fieldNumber)
+				return nil, fmt.Errorf("decode GetUserStatusResponse field %d length failed", fieldNumber)
 			}
 			idx += width
 			end := idx + int(length)
 			if end > len(data) {
-				return nil, fmt.Errorf("UserStatus field %d exceeds payload", fieldNumber)
+				return nil, fmt.Errorf("GetUserStatusResponse field %d exceeds payload", fieldNumber)
 			}
-			if fieldNumber == userStatusFieldPlanStatus {
-				if err := parsePlanStatus(data[idx:end], snapshot); err != nil {
+			switch fieldNumber {
+			case getUserStatusResponseFieldUserStatus:
+				if err := parseUserStatusMessage(data[idx:end], snapshot); err != nil {
+					return nil, err
+				}
+			case getUserStatusResponseFieldPlanInfo:
+				if err := parsePlanInfo(data[idx:end], snapshot); err != nil {
 					return nil, err
 				}
 			}
@@ -182,13 +192,83 @@ func parseUserStatusQuota(data []byte) (*TokenQuotaSnapshot, error) {
 		case 5:
 			idx += 4
 		default:
-			return nil, fmt.Errorf("unsupported UserStatus wire type %d", wireType)
+			return nil, fmt.Errorf("unsupported GetUserStatusResponse wire type %d", wireType)
 		}
 		if idx > len(data) {
-			return nil, fmt.Errorf("UserStatus parse overflow")
+			return nil, fmt.Errorf("GetUserStatusResponse parse overflow")
 		}
 	}
 	return snapshot, nil
+}
+
+func parseUserStatusMessage(data []byte, snapshot *TokenQuotaSnapshot) error {
+	idx := 0
+	for idx < len(data) {
+		tag, consumed, ok := decodeVarint(data, idx)
+		if !ok {
+			return fmt.Errorf("decode UserStatus tag failed")
+		}
+		idx += consumed
+
+		fieldNumber := int(tag >> 3)
+		wireType := int(tag & 0x7)
+		switch wireType {
+		case 0:
+			_, width, ok := decodeVarint(data, idx)
+			if !ok {
+				return fmt.Errorf("decode UserStatus field %d failed", fieldNumber)
+			}
+			idx += width
+		case 2:
+			length, width, ok := decodeVarint(data, idx)
+			if !ok {
+				return fmt.Errorf("decode UserStatus field %d length failed", fieldNumber)
+			}
+			idx += width
+			end := idx + int(length)
+			if end > len(data) {
+				return fmt.Errorf("UserStatus field %d exceeds payload", fieldNumber)
+			}
+			if fieldNumber == userStatusFieldPlanStatus {
+				if err := parsePlanStatus(data[idx:end], snapshot); err != nil {
+					return err
+				}
+			}
+			idx = end
+		case 1:
+			idx += 8
+		case 5:
+			idx += 4
+		default:
+			return fmt.Errorf("unsupported UserStatus wire type %d", wireType)
+		}
+		if idx > len(data) {
+			return fmt.Errorf("UserStatus parse overflow")
+		}
+	}
+	return nil
+}
+
+func (s *TokenQuotaSnapshot) hasQuotaData() bool {
+	if s == nil {
+		return false
+	}
+	return strings.TrimSpace(s.PlanName) != "" ||
+		s.MonthlyPromptCredits > 0 ||
+		s.MonthlyFlowCredits > 0 ||
+		s.MonthlyFlexCredits > 0 ||
+		s.AvailablePromptCredits > 0 ||
+		s.UsedPromptCredits > 0 ||
+		s.AvailableFlowCredits > 0 ||
+		s.UsedFlowCredits > 0 ||
+		s.AvailableFlexCredits > 0 ||
+		s.UsedFlexCredits > 0 ||
+		s.DailyQuotaRemainingPercent > 0 ||
+		s.WeeklyQuotaRemainingPercent > 0 ||
+		s.HideDailyQuota ||
+		s.HideWeeklyQuota ||
+		s.DailyQuotaResetAt != nil ||
+		s.WeeklyQuotaResetAt != nil
 }
 
 func parsePlanStatus(data []byte, snapshot *TokenQuotaSnapshot) error {

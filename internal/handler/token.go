@@ -148,7 +148,7 @@ func (h *TokenHandler) SyncQuota(c *gin.Context) {
 		Error(c, 500, err.Error())
 		return
 	}
-	Success(c, token)
+	SuccessWithMsg(c, service.QuotaSyncPassiveMessage(), token)
 }
 
 func (h *TokenHandler) SyncAllQuota(c *gin.Context) {
@@ -157,7 +157,7 @@ func (h *TokenHandler) SyncAllQuota(c *gin.Context) {
 		Error(c, 500, err.Error())
 		return
 	}
-	Success(c, gin.H{
+	SuccessWithMsg(c, service.QuotaSyncPassiveMessage(), gin.H{
 		"success":  success,
 		"failed":   failed,
 		"messages": messages,

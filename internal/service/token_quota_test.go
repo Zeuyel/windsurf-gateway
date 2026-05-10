@@ -31,8 +31,12 @@ func TestParseUserStatusQuota(t *testing.T) {
 		protoVarintField(planStatusFieldWeeklyResetAtUnix, 1715594400),
 	)
 	userStatus := protoMessage(protoBytesField(userStatusFieldPlanStatus, planStatus))
+	response := protoMessage(
+		protoBytesField(getUserStatusResponseFieldUserStatus, userStatus),
+		protoBytesField(getUserStatusResponseFieldPlanInfo, planInfo),
+	)
 
-	snapshot, err := parseUserStatusQuota(userStatus)
+	snapshot, err := parseUserStatusQuota(response)
 	if err != nil {
 		t.Fatalf("parseUserStatusQuota returned error: %v", err)
 	}
@@ -55,7 +59,7 @@ func TestParseUserStatusQuota(t *testing.T) {
 }
 
 func TestDecodeUserStatusResponseBodyHandlesGzip(t *testing.T) {
-	payload := protoMessage(protoBytesField(userStatusFieldPlanStatus, protoMessage()))
+	payload := protoMessage(protoBytesField(getUserStatusResponseFieldUserStatus, protoMessage()))
 
 	var compressed bytes.Buffer
 	zw := gzip.NewWriter(&compressed)
@@ -74,6 +78,16 @@ func TestDecodeUserStatusResponseBodyHandlesGzip(t *testing.T) {
 	}
 	if !bytes.Equal(decoded, payload) {
 		t.Fatal("decoded payload does not match original")
+	}
+}
+
+func TestParseUserStatusQuotaRejectsEmptySnapshot(t *testing.T) {
+	snapshot, err := parseUserStatusQuota(protoMessage())
+	if err != nil {
+		t.Fatalf("parseUserStatusQuota returned error: %v", err)
+	}
+	if snapshot.hasQuotaData() {
+		t.Fatal("expected empty GetUserStatus response to have no quota data")
 	}
 }
 

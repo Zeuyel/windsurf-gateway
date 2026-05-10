@@ -24,7 +24,7 @@
 
       <div class="sync-tip">
         Backend Token 的 Windsurf 配额会在客户端命中 `GetUserStatus` 时被动刷新。
-        如果某个账号刚导入、长时间未登录，或者你想立即核对日/周额度，可以手动触发同步。
+        后台不会再主动构造 `GetUserStatus` 请求；如果需要刷新，请让真实 Windsurf 客户端经过 Gateway 完成一次启动/状态请求。
       </div>
 
       <el-form :inline="true" :model="filters" class="filters">
@@ -77,7 +77,7 @@
               <div v-for="line in quotaCreditLines(row)" :key="line" class="quota-sub">{{ line }}</div>
               <div class="quota-meta">
                 同步时间 {{ formatTime(row.quota_updated_at) }}
-                <span v-if="!row.quota_updated_at">，正常登录时会被动同步，也可点右侧操作主动拉取</span>
+                <span v-if="!row.quota_updated_at">，正常登录时会被动同步</span>
               </div>
             </div>
           </template>
@@ -400,7 +400,7 @@ const syncQuota = async (row) => {
   try {
     const res = await client.post(`/tokens/${row.id}/sync-quota`)
     if (res.data.code === 200) {
-      ElMessage.success('额度已同步')
+      ElMessage.success(res.data.msg || '已刷新本地 Token 状态，等待真实客户端被动同步额度')
       await loadAll()
     } else {
       ElMessage.error(res.data.msg || '同步额度失败')
@@ -419,7 +419,7 @@ const syncAllQuota = async () => {
     if (res.data.code === 200) {
       const success = res.data.data?.success || 0
       const failed = res.data.data?.failed || 0
-      ElMessage.success(`额度同步完成：成功 ${success}，失败 ${failed}`)
+      ElMessage.success(res.data.msg || `已刷新 ${success} 个 Token 状态，失败 ${failed} 个；额度等待真实客户端被动同步`)
       await loadAll()
     } else {
       ElMessage.error(res.data.msg || '批量同步额度失败')
