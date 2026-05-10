@@ -37,6 +37,10 @@ type LoadBalancerService struct {
 	rng          *rand.Rand
 }
 
+type TokenSelectionPolicy struct {
+	RequireWindsurfQuota bool
+}
+
 type TokenRequestOutcome struct {
 	StatusCode      int
 	FailureCategory string
@@ -61,6 +65,10 @@ func (s *LoadBalancerService) SelectToken(ctx context.Context) (*database.Token,
 }
 
 func (s *LoadBalancerService) SelectTokenForAssignment(ctx context.Context, assignmentKey string) (*database.Token, error) {
+	return s.SelectTokenForAssignmentWithPolicy(ctx, assignmentKey, TokenSelectionPolicy{})
+}
+
+func (s *LoadBalancerService) SelectTokenForAssignmentWithPolicy(ctx context.Context, assignmentKey string, policy TokenSelectionPolicy) (*database.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -68,7 +76,7 @@ func (s *LoadBalancerService) SelectTokenForAssignment(ctx context.Context, assi
 		return nil, err
 	}
 
-	if sticky, err := s.resolveStickyAssignment(assignmentKey); err != nil {
+	if sticky, err := s.resolveStickyAssignment(assignmentKey, policy); err != nil {
 		logger.Warnf("Failed to resolve sticky backend token for %s: %v", assignmentKey, err)
 	} else if sticky != nil {
 		return sticky, nil
@@ -82,7 +90,7 @@ func (s *LoadBalancerService) SelectTokenForAssignment(ctx context.Context, assi
 	now := time.Now()
 	candidates := make([]*database.Token, 0, len(tokens))
 	for i := range tokens {
-		if tokens[i].IsReadyForScheduling(now) {
+		if isTokenEligibleForPolicy(&tokens[i], now, policy) {
 			candidates = append(candidates, &tokens[i])
 		}
 	}
@@ -298,7 +306,7 @@ func (s *LoadBalancerService) pickWeighted(candidates []*database.Token) (*datab
 	return candidates[len(candidates)-1], nil
 }
 
-func (s *LoadBalancerService) resolveStickyAssignment(assignmentKey string) (*database.Token, error) {
+func (s *LoadBalancerService) resolveStickyAssignment(assignmentKey string, policy TokenSelectionPolicy) (*database.Token, error) {
 	if assignmentKey == "" || s.cache == nil {
 		return nil, nil
 	}
@@ -315,7 +323,7 @@ func (s *LoadBalancerService) resolveStickyAssignment(assignmentKey string) (*da
 	}
 
 	now := time.Now()
-	if !token.IsReadyForScheduling(now) {
+	if !isTokenEligibleForPolicy(token, now, policy) {
 		_ = s.cache.Delete(s.stickyAssignmentCacheKey(assignmentKey))
 		return nil, nil
 	}
@@ -346,4 +354,14 @@ func truncateString(value string, limit int) string {
 		return value
 	}
 	return value[:limit]
+}
+
+func isTokenEligibleForPolicy(token *database.Token, now time.Time, policy TokenSelectionPolicy) bool {
+	if token == nil || !token.IsReadyForScheduling(now) {
+		return false
+	}
+	if policy.RequireWindsurfQuota && !token.HasGatewayQuotaAvailable() {
+		return false
+	}
+	return true
 }

@@ -38,7 +38,13 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	requestID := uuid.NewString()
 	c.Writer.Header().Set("X-Request-ID", requestID)
 
+	authRequired := h.services.SystemConfig.GetBool("require_user_auth_proxy", false)
 	userToken := extractGatewayUserToken(c.GetHeader("Authorization"))
+	if authRequired && userToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "gateway user token required"})
+		return
+	}
+
 	var user *database.User
 	var err error
 	if userToken != "" {
@@ -60,7 +66,10 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	}
 
 	assignmentKey := buildAssignmentKey(c, user)
-	backendToken, err := h.services.LoadBalancer.SelectTokenForAssignment(c.Request.Context(), assignmentKey)
+	selectionPolicy := service.TokenSelectionPolicy{
+		RequireWindsurfQuota: user == nil || !user.UnlimitedAccess,
+	}
+	backendToken, err := h.services.LoadBalancer.SelectTokenForAssignmentWithPolicy(c.Request.Context(), assignmentKey, selectionPolicy)
 	if err != nil {
 		logger.Errorf("Failed to select backend token: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no available backend tokens"})

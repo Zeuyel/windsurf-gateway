@@ -144,7 +144,7 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 		}
 
 		protected := api.Group("")
-		protected.Use(handlers.Auth.AuthMiddleware())
+		protected.Use(handlers.Auth.AuthMiddleware(), handlers.Auth.AdminMiddleware())
 		{
 			protected.GET("/auth/me", handlers.Auth.Me)
 			protected.PUT("/auth/profile", handlers.Auth.UpdateProfile)
@@ -168,8 +168,10 @@ func setupRouter(cfg *config.Config, handlers *handler.Handlers) *gin.Engine {
 
 			users := protected.Group("/users")
 			{
+				users.POST("", handlers.UserAuth.AdminCreateUser)
 				users.GET("", handlers.UserAuth.ListUsers)
 				users.PUT("/:id", handlers.UserAuth.AdminUpdateUser)
+				users.DELETE("/:id", handlers.UserAuth.DeleteUser)
 				users.POST("/:id/ban", handlers.UserAuth.BanUser)
 				users.POST("/:id/unban", handlers.UserAuth.UnbanUser)
 				users.POST("/:id/toggle-shared", handlers.UserAuth.ToggleSharedPermission)

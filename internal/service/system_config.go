@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"windsurf-gateway/internal/database"
 
 	"gorm.io/gorm"
@@ -44,7 +45,8 @@ func (s *SystemConfigService) Set(key, value string) error {
 
 func (s *SystemConfigService) EnsureDefaults() error {
 	defaults := map[string]string{
-		"load_balancer_strategy": "round_robin",
+		"load_balancer_strategy":  "round_robin",
+		"require_user_auth_proxy": "false",
 	}
 
 	for key, value := range defaults {
@@ -60,6 +62,21 @@ func (s *SystemConfigService) EnsureDefaults() error {
 		}
 	}
 	return nil
+}
+
+func (s *SystemConfigService) GetBool(key string, fallback bool) bool {
+	value, err := s.Get(key)
+	if err != nil {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func (s *SystemConfigService) GetAll() ([]database.SystemConfig, error) {

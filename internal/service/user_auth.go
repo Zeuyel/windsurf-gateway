@@ -73,7 +73,6 @@ func (s *UserAuthService) Register(username, password, email, invitationCode str
 		Status:      "active",
 		ApiToken:    apiToken,
 		TokenStatus: "active",
-		MaxRequests: 100,
 	}
 
 	if err := user.SetPassword(password); err != nil {
@@ -97,6 +96,49 @@ func (s *UserAuthService) Register(username, password, email, invitationCode str
 
 	logger.Infof("User registered: %s", username)
 	return user, jwtToken, nil
+}
+
+func (s *UserAuthService) CreateManagedUser(username, password, email, role, status string, unlimitedAccess bool, rateLimitPerMinute int) (*database.User, error) {
+	if len(username) < 3 || len(username) > 50 {
+		return nil, errors.New("username must be 3-50 characters")
+	}
+	if len(password) < s.passwordMinLength || len(password) > s.passwordMaxLength {
+		return nil, fmt.Errorf("password must be %d-%d characters", s.passwordMinLength, s.passwordMaxLength)
+	}
+	role = normalizeUserRole(role)
+	status = normalizeUserStatus(status)
+	if rateLimitPerMinute <= 0 {
+		rateLimitPerMinute = 30
+	}
+
+	var existing database.User
+	if err := s.db.Where("username = ?", username).First(&existing).Error; err == nil {
+		return nil, errors.New("username already exists")
+	}
+
+	apiToken, err := generateUserToken()
+	if err != nil {
+		return nil, err
+	}
+
+	user := &database.User{
+		Username:           username,
+		Email:              email,
+		Role:               role,
+		Status:             status,
+		ApiToken:           apiToken,
+		TokenStatus:        "active",
+		UnlimitedAccess:    unlimitedAccess,
+		RateLimitPerMinute: rateLimitPerMinute,
+	}
+
+	if err := user.SetPassword(password); err != nil {
+		return nil, err
+	}
+	if err := s.db.Create(user).Error; err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 func (s *UserAuthService) Login(username, password string) (*database.User, string, error) {
@@ -169,14 +211,22 @@ func (s *UserAuthService) GetUserByID(id uint) (*database.User, error) {
 	return &user, nil
 }
 
-func (s *UserAuthService) ListUsers(page, pageSize int) ([]database.User, int64, error) {
+func (s *UserAuthService) ListUsers(page, pageSize int, username, status string) ([]database.User, int64, error) {
 	var users []database.User
 	var total int64
 
-	s.db.Model(&database.User{}).Count(&total)
+	query := s.db.Model(&database.User{})
+	if username != "" {
+		query = query.Where("username LIKE ?", "%"+username+"%")
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	query.Count(&total)
 
 	offset := (page - 1) * pageSize
-	if err := s.db.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&users).Error; err != nil {
+	if err := query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&users).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -184,7 +234,17 @@ func (s *UserAuthService) ListUsers(page, pageSize int) ([]database.User, int64,
 }
 
 func (s *UserAuthService) UpdateUser(id uint, updates map[string]interface{}) error {
+	if rawRole, ok := updates["role"].(string); ok {
+		updates["role"] = normalizeUserRole(rawRole)
+	}
+	if rawStatus, ok := updates["status"].(string); ok {
+		updates["status"] = normalizeUserStatus(rawStatus)
+	}
 	return s.db.Model(&database.User{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func (s *UserAuthService) DeleteUser(id uint) error {
+	return s.db.Delete(&database.User{}, id).Error
 }
 
 func (s *UserAuthService) BanUser(id uint) error {
@@ -242,4 +302,24 @@ func generateUserToken() (string, error) {
 		return "", err
 	}
 	return "ws-" + hex.EncodeToString(bytes), nil
+}
+
+func normalizeUserRole(role string) string {
+	switch role {
+	case "admin":
+		return "admin"
+	default:
+		return "user"
+	}
+}
+
+func normalizeUserStatus(status string) string {
+	switch status {
+	case "disabled":
+		return "disabled"
+	case "banned":
+		return "banned"
+	default:
+		return "active"
+	}
 }

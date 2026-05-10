@@ -4,11 +4,10 @@
       <template #header>
         <div class="card-header">
           <span>用户管理</span>
-          <el-button type="primary" @click="showCreateDialog = true">
-            <el-icon><Plus /></el-icon> 添加用户
-          </el-button>
+          <el-button type="primary" @click="openCreateDialog">添加用户</el-button>
         </div>
       </template>
+
       <el-form :inline="true" :model="searchForm" class="search-form">
         <el-form-item label="用户名">
           <el-input v-model="searchForm.username" placeholder="搜索用户名" clearable />
@@ -18,25 +17,27 @@
             <el-option label="全部" value="" />
             <el-option label="活跃" value="active" />
             <el-option label="禁用" value="disabled" />
+            <el-option label="封禁" value="banned" />
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="loadUsers">
-            <el-icon><Search /></el-icon> 搜索
-          </el-button>
-          <el-button @click="resetSearch">
-            <el-icon><Refresh /></el-icon> 重置
-          </el-button>
+          <el-button type="primary" @click="loadUsers">搜索</el-button>
+          <el-button @click="resetSearch">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <el-card class="table-card">
+      <div class="table-tip">
+        <strong>配额说明：</strong>
+        普通用户默认受 Windsurf Credit 池限制，不再按“最大请求数”限额。打开“无限模式”后，该用户会绕过 Gateway 的 Windsurf Credit 约束，只要后端 token 还能被调度就可继续使用。
+      </div>
+
       <el-table :data="users" stripe v-loading="loading" style="width: 100%">
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="username" label="用户名" min-width="120" />
-        <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="api_token" label="API Token" min-width="150" show-overflow-tooltip>
+        <el-table-column prop="username" label="用户名" min-width="140" />
+        <el-table-column prop="email" label="邮箱" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="api_token" label="网关 Token" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             <code class="token-text">{{ maskToken(row.api_token) }}</code>
           </template>
@@ -44,53 +45,48 @@
         <el-table-column prop="role" label="角色" width="100">
           <template #default="{ row }">
             <el-tag :type="row.role === 'admin' ? 'danger' : 'primary'" size="small">
-              {{ row.role }}
+              {{ row.role === 'admin' ? '管理员' : '普通用户' }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small">
-              {{ row.status }}
+            <el-tag :type="statusTagType(row.status)" size="small">
+              {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="使用量" width="120">
+        <el-table-column label="接入策略" min-width="170">
           <template #default="{ row }">
-            <el-progress 
-              :percentage="getUsagePercentage(row)" 
-              :color="getUsageColor(row)"
-              :stroke-width="8"
-            />
+            <el-tag :type="row.unlimited_access ? 'warning' : 'success'" size="small">
+              {{ row.unlimited_access ? '无限模式' : '受 Windsurf Credit 限制' }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="used_requests" label="已用/上限" width="120">
+        <el-table-column prop="rate_limit_per_minute" label="每分钟限速" width="120">
           <template #default="{ row }">
-            {{ row.used_requests }} / {{ row.max_requests || '∞' }}
+            {{ row.rate_limit_per_minute || 30 }} 次
           </template>
         </el-table-column>
+        <el-table-column prop="used_requests" label="累计请求" width="120" />
         <el-table-column prop="created_at" label="创建时间" width="180">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <el-button-group>
-              <el-button size="small" @click="editUser(row)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
+              <el-button size="small" @click="openEditDialog(row)">编辑</el-button>
               <el-button size="small" type="warning" @click="toggleStatus(row)">
-                <el-icon><Switch /></el-icon>
+                {{ row.status === 'active' ? '禁用' : '启用' }}
               </el-button>
-              <el-button size="small" type="danger" @click="deleteUser(row)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
+              <el-button size="small" type="danger" @click="deleteUser(row)">删除</el-button>
             </el-button-group>
           </template>
         </el-table-column>
       </el-table>
-      
+
       <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.page"
@@ -104,16 +100,16 @@
       </div>
     </el-card>
 
-    <el-dialog v-model="showCreateDialog" title="添加用户" width="500px">
-      <el-form :model="form" :rules="rules" ref="formRef" label-width="100px">
+    <el-dialog v-model="showDialog" :title="dialogTitle" width="560px" destroy-on-close>
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
         <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" placeholder="请输入用户名" />
+          <el-input v-model="form.username" :disabled="isEditing" placeholder="请输入用户名" />
         </el-form-item>
         <el-form-item label="邮箱" prop="email">
           <el-input v-model="form.email" placeholder="请输入邮箱" />
         </el-form-item>
-        <el-form-item label="密码" prop="password">
-          <el-input v-model="form.password" type="password" placeholder="请输入密码" />
+        <el-form-item v-if="!isEditing" label="密码" prop="password">
+          <el-input v-model="form.password" type="password" placeholder="请输入密码" show-password />
         </el-form-item>
         <el-form-item label="角色" prop="role">
           <el-select v-model="form.role" placeholder="请选择角色">
@@ -121,29 +117,45 @@
             <el-option label="管理员" value="admin" />
           </el-select>
         </el-form-item>
-        <el-form-item label="最大请求" prop="max_requests">
-          <el-input-number v-model="form.max_requests" :min="0" />
+        <el-form-item label="账户状态" prop="status">
+          <el-select v-model="form.status" placeholder="请选择状态">
+            <el-option label="活跃" value="active" />
+            <el-option label="禁用" value="disabled" />
+            <el-option label="封禁" value="banned" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="无限模式">
+          <div class="switch-row">
+            <el-switch v-model="form.unlimited_access" />
+            <span class="switch-copy">
+              {{ form.unlimited_access ? '该用户不受 Gateway 的 Windsurf Credit 约束' : '该用户默认受 Windsurf Credit 池限制' }}
+            </span>
+          </div>
+        </el-form-item>
+        <el-form-item label="每分钟限速" prop="rate_limit_per_minute">
+          <el-input-number v-model="form.rate_limit_per_minute" :min="1" :max="600" style="width: 100%" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showCreateDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitForm" :loading="submitting">确定</el-button>
+        <el-button @click="showDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitForm" :loading="submitting">保存</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '../api/client'
 import dayjs from 'dayjs'
 
 const loading = ref(false)
 const users = ref([])
-const showCreateDialog = ref(false)
+const showDialog = ref(false)
 const submitting = ref(false)
 const formRef = ref(null)
+const editingUserId = ref(null)
 
 const searchForm = reactive({
   username: '',
@@ -156,41 +168,69 @@ const pagination = reactive({
   total: 0
 })
 
-const form = reactive({
+const baseForm = () => ({
   username: '',
   email: '',
   password: '',
   role: 'user',
-  max_requests: 0
+  status: 'active',
+  unlimited_access: false,
+  rate_limit_per_minute: 30
 })
+
+const form = reactive(baseForm())
+
+const isEditing = computed(() => editingUserId.value !== null)
+const dialogTitle = computed(() => (isEditing.value ? '编辑用户' : '添加用户'))
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   email: [{ required: true, message: '请输入邮箱', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-  role: [{ required: true, message: '请选择角色', trigger: 'change' }]
+  role: [{ required: true, message: '请选择角色', trigger: 'change' }],
+  status: [{ required: true, message: '请选择状态', trigger: 'change' }]
 }
 
 const maskToken = (token) => {
   if (!token) return ''
-  if (token.length <= 8) return token
-  return token.substring(0, 4) + '****' + token.substring(token.length - 4)
-}
-
-const getUsagePercentage = (row) => {
-  if (!row.max_requests || row.max_requests === 0) return 0
-  return Math.round((row.used_requests / row.max_requests) * 100)
-}
-
-const getUsageColor = (row) => {
-  const percentage = getUsagePercentage(row)
-  if (percentage < 50) return '#67c23a'
-  if (percentage < 80) return '#e6a23c'
-  return '#f56c6c'
+  if (token.length <= 12) return token
+  return token.substring(0, 8) + '...' + token.substring(token.length - 4)
 }
 
 const formatTime = (time) => {
+  if (!time) return '-'
   return dayjs(time).format('YYYY-MM-DD HH:mm:ss')
+}
+
+const statusLabel = (status) => {
+  switch (status) {
+    case 'active':
+      return '活跃'
+    case 'disabled':
+      return '禁用'
+    case 'banned':
+      return '封禁'
+    default:
+      return status || '-'
+  }
+}
+
+const statusTagType = (status) => {
+  switch (status) {
+    case 'active':
+      return 'success'
+    case 'disabled':
+      return 'warning'
+    case 'banned':
+      return 'danger'
+    default:
+      return 'info'
+  }
+}
+
+const resetForm = () => {
+  editingUserId.value = null
+  Object.assign(form, baseForm())
 }
 
 const loadUsers = async () => {
@@ -207,6 +247,8 @@ const loadUsers = async () => {
     if (res.data.code === 200) {
       users.value = res.data.data?.list || []
       pagination.total = res.data.data?.total || 0
+    } else {
+      ElMessage.error(res.data.msg || '加载用户列表失败')
     }
   } catch (error) {
     ElMessage.error('加载用户列表失败')
@@ -222,58 +264,78 @@ const resetSearch = () => {
   loadUsers()
 }
 
-const submitForm = async () => {
-  if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (valid) {
-      submitting.value = true
-      try {
-        const res = await client.post('/users', form)
-        if (res.data.code === 200) {
-          ElMessage.success('添加成功')
-          showCreateDialog.value = false
-          Object.assign(form, {
-            username: '',
-            email: '',
-            password: '',
-            role: 'user',
-            max_requests: 0
-          })
-          loadUsers()
-        } else {
-          ElMessage.error(res.data.msg || '添加失败')
-        }
-      } catch (error) {
-        ElMessage.error('添加失败')
-      } finally {
-        submitting.value = false
-      }
-    }
-  })
+const openCreateDialog = () => {
+  resetForm()
+  showDialog.value = true
 }
 
-const editUser = (row) => {
+const openEditDialog = (row) => {
+  editingUserId.value = row.id
   Object.assign(form, {
     username: row.username,
     email: row.email,
     password: '',
     role: row.role,
-    max_requests: row.max_requests
+    status: row.status,
+    unlimited_access: !!row.unlimited_access,
+    rate_limit_per_minute: row.rate_limit_per_minute || 30
   })
-  showCreateDialog.value = true
+  showDialog.value = true
+}
+
+const submitForm = async () => {
+  if (!formRef.value) return
+  await formRef.value.validate(async (valid) => {
+    if (!valid) return
+    submitting.value = true
+    try {
+      const payload = {
+        username: form.username,
+        email: form.email,
+        password: form.password,
+        role: form.role,
+        status: form.status,
+        unlimited_access: form.unlimited_access,
+        rate_limit_per_minute: form.rate_limit_per_minute
+      }
+
+      const res = isEditing.value
+        ? await client.put(`/users/${editingUserId.value}`, {
+            email: payload.email,
+            role: payload.role,
+            status: payload.status,
+            unlimited_access: payload.unlimited_access,
+            rate_limit_per_minute: payload.rate_limit_per_minute
+          })
+        : await client.post('/users', payload)
+
+      if (res.data.code === 200) {
+        ElMessage.success(isEditing.value ? '用户已更新' : '用户已创建')
+        showDialog.value = false
+        resetForm()
+        loadUsers()
+      } else {
+        ElMessage.error(res.data.msg || '保存失败')
+      }
+    } catch (error) {
+      ElMessage.error('保存失败')
+    } finally {
+      submitting.value = false
+    }
+  })
 }
 
 const toggleStatus = async (row) => {
   const newStatus = row.status === 'active' ? 'disabled' : 'active'
   try {
     await ElMessageBox.confirm(
-      `确定要${newStatus === 'active' ? '启用' : '禁用'}该用户吗？`,
+      `确定要将用户 ${row.username} ${newStatus === 'active' ? '启用' : '禁用'} 吗？`,
       '确认操作',
       { type: 'warning' }
     )
     const res = await client.put(`/users/${row.id}`, { status: newStatus })
     if (res.data.code === 200) {
-      ElMessage.success('操作成功')
+      ElMessage.success('状态已更新')
       loadUsers()
     } else {
       ElMessage.error(res.data.msg || '操作失败')
@@ -288,13 +350,13 @@ const toggleStatus = async (row) => {
 const deleteUser = async (row) => {
   try {
     await ElMessageBox.confirm(
-      '确定要删除该用户吗？此操作不可恢复。',
+      `确定要删除用户 ${row.username} 吗？此操作不可恢复。`,
       '确认删除',
       { type: 'warning' }
     )
     const res = await client.delete(`/users/${row.id}`)
     if (res.data.code === 200) {
-      ElMessage.success('删除成功')
+      ElMessage.success('用户已删除')
       loadUsers()
     } else {
       ElMessage.error(res.data.msg || '删除失败')
@@ -334,12 +396,34 @@ onMounted(() => {
   min-height: 600px;
 }
 
+.table-tip {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f4f8ff;
+  border: 1px solid #d8e6ff;
+  line-height: 1.7;
+  color: #44536a;
+}
+
 .token-text {
   background: #f5f5f5;
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
   font-family: 'Courier New', monospace;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  line-height: 1.6;
+}
+
+.switch-copy {
+  color: #666;
+  font-size: 13px;
 }
 
 .pagination {

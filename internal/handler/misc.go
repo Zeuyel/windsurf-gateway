@@ -94,7 +94,10 @@ func (h *SystemConfigHandler) UpdateSystemConfig(c *gin.Context) {
 		return
 	}
 	for k, v := range req {
-		h.svc.Set(k, v)
+		if err := h.svc.Set(k, v); err != nil {
+			Error(c, 500, err.Error())
+			return
+		}
 	}
 	Success(c, nil)
 }

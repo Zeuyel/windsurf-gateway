@@ -114,7 +114,7 @@ func (h *UserAuthHandler) RegenerateAPIToken(c *gin.Context) {
 
 func (h *UserAuthHandler) ListUsers(c *gin.Context) {
 	page, pageSize := getPageParams(c)
-	users, total, err := h.svc.ListUsers(page, pageSize)
+	users, total, err := h.svc.ListUsers(page, pageSize, c.Query("username"), c.Query("status"))
 	if err != nil {
 		Error(c, 500, err.Error())
 		return
@@ -122,21 +122,67 @@ func (h *UserAuthHandler) ListUsers(c *gin.Context) {
 	Success(c, gin.H{"list": users, "total": total, "page": page, "page_size": pageSize})
 }
 
+func (h *UserAuthHandler) AdminCreateUser(c *gin.Context) {
+	var req struct {
+		Username           string `json:"username" binding:"required"`
+		Email              string `json:"email"`
+		Password           string `json:"password" binding:"required"`
+		Role               string `json:"role"`
+		Status             string `json:"status"`
+		UnlimitedAccess    bool   `json:"unlimited_access"`
+		RateLimitPerMinute int    `json:"rate_limit_per_minute"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, 400, "invalid request: "+err.Error())
+		return
+	}
+
+	user, err := h.svc.CreateManagedUser(req.Username, req.Password, req.Email, req.Role, req.Status, req.UnlimitedAccess, req.RateLimitPerMinute)
+	if err != nil {
+		Error(c, 400, err.Error())
+		return
+	}
+	Success(c, user)
+}
+
 func (h *UserAuthHandler) AdminUpdateUser(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		MaxRequests int    `json:"max_requests"`
-		Status      string `json:"status"`
+		Email              string `json:"email"`
+		Role               string `json:"role"`
+		Status             string `json:"status"`
+		UnlimitedAccess    *bool  `json:"unlimited_access"`
+		RateLimitPerMinute *int   `json:"rate_limit_per_minute"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Error(c, 400, "invalid request")
 		return
 	}
 	uid := parseUint(id)
-	h.svc.UpdateUser(uid, map[string]interface{}{
-		"max_requests": req.MaxRequests,
-		"status":       req.Status,
-	})
+	updates := map[string]interface{}{}
+	if req.Email != "" {
+		updates["email"] = req.Email
+	}
+	if req.Role != "" {
+		updates["role"] = req.Role
+	}
+	if req.Status != "" {
+		updates["status"] = req.Status
+	}
+	if req.UnlimitedAccess != nil {
+		updates["unlimited_access"] = *req.UnlimitedAccess
+	}
+	if req.RateLimitPerMinute != nil && *req.RateLimitPerMinute > 0 {
+		updates["rate_limit_per_minute"] = *req.RateLimitPerMinute
+	}
+	if len(updates) == 0 {
+		Error(c, 400, "no changes submitted")
+		return
+	}
+	if err := h.svc.UpdateUser(uid, updates); err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
 	Success(c, nil)
 }
 
@@ -152,6 +198,15 @@ func (h *UserAuthHandler) BanUser(c *gin.Context) {
 func (h *UserAuthHandler) UnbanUser(c *gin.Context) {
 	id := parseUint(c.Param("id"))
 	if err := h.svc.UnbanUser(id); err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
+	Success(c, nil)
+}
+
+func (h *UserAuthHandler) DeleteUser(c *gin.Context) {
+	id := parseUint(c.Param("id"))
+	if err := h.svc.DeleteUser(id); err != nil {
 		Error(c, 500, err.Error())
 		return
 	}
@@ -197,10 +252,43 @@ func (h *UserAuthHandler) UserAuthMiddleware() gin.HandlerFunc {
 }
 
 func (h *UserAuthHandler) GetUserSettings(c *gin.Context) {
-	Success(c, gin.H{})
+	userID := c.GetUint("user_id")
+	user, err := h.svc.GetUserByID(userID)
+	if err != nil {
+		Error(c, 404, "user not found")
+		return
+	}
+
+	accessMode := "windsurf_credit_limited"
+	if user.UnlimitedAccess {
+		accessMode = "unlimited"
+	}
+
+	Success(c, gin.H{
+		"user": user,
+		"access": gin.H{
+			"mode":                  accessMode,
+			"unlimited_access":      user.UnlimitedAccess,
+			"rate_limit_per_minute": user.RateLimitPerMinute,
+			"used_requests":         user.UsedRequests,
+			"token_status":          user.TokenStatus,
+		},
+	})
 }
 
 func (h *UserAuthHandler) UpdateUserSettings(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, 400, "invalid request")
+		return
+	}
+	if err := h.svc.UpdateUser(userID, map[string]interface{}{"email": req.Email}); err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
 	Success(c, nil)
 }
 

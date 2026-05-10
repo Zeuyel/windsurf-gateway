@@ -20,6 +20,7 @@ type User struct {
 	TokenStatus        string         `gorm:"size:20;default:active" json:"token_status"`
 	MaxRequests        int            `gorm:"default:0" json:"max_requests"`
 	UsedRequests       int            `gorm:"default:0" json:"used_requests"`
+	UnlimitedAccess    bool           `gorm:"default:false" json:"unlimited_access"`
 	RateLimitPerMinute int            `gorm:"default:30" json:"rate_limit_per_minute"`
 	CanUseSharedTokens bool           `gorm:"default:true" json:"can_use_shared_tokens"`
 	LastLogin          *time.Time     `json:"last_login"`
@@ -59,9 +60,6 @@ func (u *User) IsTokenActive() bool {
 
 func (u *User) CanMakeRequest() bool {
 	if !u.IsActive() || !u.IsTokenActive() {
-		return false
-	}
-	if u.MaxRequests > 0 && u.UsedRequests >= u.MaxRequests {
 		return false
 	}
 	return true
@@ -162,6 +160,19 @@ func (t *Token) IsReadyForScheduling(now time.Time) bool {
 		return false
 	}
 	return t.PoolStatus == "available"
+}
+
+func (t *Token) HasGatewayQuotaAvailable() bool {
+	if t.QuotaUpdatedAt == nil {
+		return true
+	}
+	if !t.HideDailyQuota && t.DailyQuotaRemainingPercent <= 0 {
+		return false
+	}
+	if !t.HideWeeklyQuota && t.WeeklyQuotaRemainingPercent <= 0 {
+		return false
+	}
+	return true
 }
 
 // InvitationCode model
