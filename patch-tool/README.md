@@ -21,6 +21,7 @@ https://server.codeium.com
 The tool supports three patch targets:
 
 - `settings.json`: user-level config override.
+- `settings.json`: user-level config override, and disables the `devin-cloud` ACP connector in gateway mode.
 - `state.vscdb`: Windsurf global state cache, if present.
 - `extension.js`: bundled extension constant replacement plus gateway auth-session fallback and user-status fallback.
 
@@ -84,6 +85,7 @@ Default Linux install path:
 - `--mode=extension` or `--mode=all` may require elevated permissions because `/opt/windsurf` is usually root-owned.
 - If Windsurf still shows `Log in to Windsurf` after gateway `Ping` already returns `200`, rerun with `--mode=all` so the bundled extension gets the auth-session fallback patch.
 - If gateway `Ping` returns `200` but the top bar still flips back to `Log in to Windsurf`, rerun with `--mode=all` from the latest repo so the bundled extension also gets the user-status fallback patch.
+- In gateway mode the patch also writes `windsurf.acp.enabledAgents.devin-cloud = false` to suppress the remote Devin Cloud ACP connector, which otherwise may show `Devin Cloud is disconnected.` while core model RPCs are unrelated.
 - `node patch.js detect` now shows whether both extension fallbacks are already present.
 - Restart Windsurf after patching.
 - Point `codeium.apiServerUrl` to the gateway root URL, not to `/proxy`; the gateway catches native Windsurf API paths and forwards them with backend pool tokens.

@@ -9,6 +9,7 @@ const CONFIG_KEY = 'codeium.apiServerUrl'
 const REGISTER_CONFIG_KEY = 'codeium.registerApiServerUrl'
 const DEFAULT_REGISTER_URL = 'https://register.windsurf.com'
 const GATEWAY_PLACEHOLDER_API_KEY = 'sk-ws-01-gateway-placeholder'
+const ACP_CONFIG_KEY = 'windsurf.acp.enabledAgents'
 const AUTH_SESSION_FALLBACK_SENTINEL = `id:"windsurf-gateway",accessToken:"${GATEWAY_PLACEHOLDER_API_KEY}"`
 const AUTH_SESSION_FALLBACK_REGEX = /await i\.authentication\.getSession\(n\.WindsurfExtensionMetadata\.getInstance\(\)\.authProviderId,\[[\s\S]*?\],e\)/
 const USER_STATUS_FALLBACK_SENTINEL = `allowedCommandModelConfigsProtoBinaryBase64:[],userStatusProtoBinaryBase64:""}`
@@ -77,11 +78,16 @@ function patchSettings(gateway, registerGateway) {
   const settings = readJson(settingsPath)
   const oldApi = settings[CONFIG_KEY]
   const oldRegister = settings[REGISTER_CONFIG_KEY]
+  const enabledAgents = typeof settings[ACP_CONFIG_KEY] === 'object' && settings[ACP_CONFIG_KEY] !== null
+    ? settings[ACP_CONFIG_KEY]
+    : {}
   settings[CONFIG_KEY] = gateway
   if (registerGateway) settings[REGISTER_CONFIG_KEY] = registerGateway
+  settings[ACP_CONFIG_KEY] = { ...enabledAgents, 'devin-cloud': false }
   writeJson(settingsPath, settings)
   console.log(`settings ${CONFIG_KEY}: ${oldApi || DEFAULT_API_URL} -> ${gateway}`)
   if (registerGateway) console.log(`settings ${REGISTER_CONFIG_KEY}: ${oldRegister || DEFAULT_REGISTER_URL} -> ${registerGateway}`)
+  console.log(`settings ${ACP_CONFIG_KEY}.devin-cloud -> false`)
 }
 
 function patchExtension(gateway, registerGateway) {
@@ -196,6 +202,7 @@ function detect() {
     const settings = readJson(settingsPath)
     console.log(`${CONFIG_KEY}: ${settings[CONFIG_KEY] || '(default)'}`)
     console.log(`${REGISTER_CONFIG_KEY}: ${settings[REGISTER_CONFIG_KEY] || '(default)'}`)
+    console.log(`${ACP_CONFIG_KEY}.devin-cloud: ${settings[ACP_CONFIG_KEY]?.['devin-cloud']}`)
   }
   if (fs.existsSync(extensionPath)) {
     const content = fs.readFileSync(extensionPath, 'utf8')
