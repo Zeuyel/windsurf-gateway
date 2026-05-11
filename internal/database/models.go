@@ -164,16 +164,6 @@ func (t *Token) HasGatewayQuotaAvailable() bool {
 		return true
 	}
 
-	// Prefer concrete credit counters when present. This avoids false blocking
-	// when daily/weekly percentages are absent or not populated by Windsurf.
-	if t.AvailablePromptCredits > 0 || t.AvailableFlowCredits > 0 || t.AvailableFlexCredits > 0 {
-		return true
-	}
-	if t.MonthlyPromptCredits > 0 || t.MonthlyFlowCredits > 0 || t.MonthlyFlexCredits > 0 ||
-		t.UsedPromptCredits > 0 || t.UsedFlowCredits > 0 || t.UsedFlexCredits > 0 {
-		return false
-	}
-
 	dailyQuotaKnown := t.HideDailyQuota || t.DailyQuotaResetAt != nil || t.DailyQuotaRemainingPercent > 0
 	if dailyQuotaKnown && !t.HideDailyQuota && t.DailyQuotaRemainingPercent <= 0 {
 		return false
@@ -181,6 +171,17 @@ func (t *Token) HasGatewayQuotaAvailable() bool {
 
 	weeklyQuotaKnown := t.HideWeeklyQuota || t.WeeklyQuotaResetAt != nil || t.WeeklyQuotaRemainingPercent > 0
 	if weeklyQuotaKnown && !t.HideWeeklyQuota && t.WeeklyQuotaRemainingPercent <= 0 {
+		return false
+	}
+
+	// Prefer concrete credit counters when present. This avoids false blocking
+	// when daily/weekly percentages are absent or not populated by Windsurf,
+	// but never overrides known exhausted daily/weekly quota.
+	if t.AvailablePromptCredits > 0 || t.AvailableFlowCredits > 0 || t.AvailableFlexCredits > 0 {
+		return true
+	}
+	if t.MonthlyPromptCredits > 0 || t.MonthlyFlowCredits > 0 || t.MonthlyFlexCredits > 0 ||
+		t.UsedPromptCredits > 0 || t.UsedFlowCredits > 0 || t.UsedFlexCredits > 0 {
 		return false
 	}
 

@@ -48,6 +48,28 @@ func TestTokenHasGatewayQuotaAvailable(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "known daily quota exhausted blocks even with monthly credits",
+			token: Token{
+				QuotaUpdatedAt:              &now,
+				AvailablePromptCredits:      10000,
+				DailyQuotaRemainingPercent:  0,
+				DailyQuotaResetAt:           &now,
+				WeeklyQuotaRemainingPercent: 50,
+			},
+			want: false,
+		},
+		{
+			name: "known weekly quota exhausted blocks even with monthly credits",
+			token: Token{
+				QuotaUpdatedAt:              &now,
+				AvailableFlowCredits:        20000,
+				DailyQuotaRemainingPercent:  50,
+				WeeklyQuotaRemainingPercent: 0,
+				WeeklyQuotaResetAt:          &now,
+			},
+			want: false,
+		},
+		{
 			name: "missing percentage fields do not block by default",
 			token: Token{
 				QuotaUpdatedAt:              &now,
