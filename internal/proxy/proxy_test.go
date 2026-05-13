@@ -79,3 +79,25 @@ func TestCreateRequestSkipsMalformedProtoRewrite(t *testing.T) {
 		t.Fatalf("request body changed unexpectedly: got %v want %v", body, originalBody)
 	}
 }
+
+func TestStableProfileSeedPrefersPrivacySeed(t *testing.T) {
+	tokenA := &database.Token{
+		ID:            "token-1",
+		Name:          "account-a",
+		TenantAddress: "https://server.codeium.com",
+		PrivacySeed:   "seed-a",
+	}
+	tokenB := &database.Token{
+		ID:            "token-1",
+		Name:          "account-a",
+		TenantAddress: "https://server.codeium.com",
+		PrivacySeed:   "seed-b",
+	}
+
+	if buildStableSessionID(tokenA) == buildStableSessionID(tokenB) {
+		t.Fatal("expected different privacy seeds to produce different session ids")
+	}
+	if buildStableDeviceFingerprint(tokenA) == buildStableDeviceFingerprint(tokenB) {
+		t.Fatal("expected different privacy seeds to produce different device fingerprints")
+	}
+}

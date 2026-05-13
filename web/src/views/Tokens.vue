@@ -118,6 +118,7 @@
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="sync">同步额度</el-dropdown-item>
+                    <el-dropdown-item command="reset-device">重置机器码</el-dropdown-item>
                     <el-dropdown-item command="toggle-status">
                       {{ row.status === 'active' ? '禁用' : '启用' }}
                     </el-dropdown-item>
@@ -595,10 +596,33 @@ const unlockCooldown = async (row) => {
   }
 }
 
+const resetDeviceIdentity = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确定重置 ${row.name} 的伪机器码吗？新的请求会使用新的 sessionId/deviceFingerprint。`, '确认操作', { type: 'warning' })
+    syncingTokenId.value = row.id
+    const res = await client.post(`/tokens/${row.id}/reset-device`)
+    if (res.data.code === 200) {
+      ElMessage.success(res.data.msg || '机器码已重置')
+      await loadAll()
+    } else {
+      ElMessage.error(res.data.msg || '重置机器码失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('重置机器码失败')
+    }
+  } finally {
+    syncingTokenId.value = ''
+  }
+}
+
 const handleRowCommand = async (row, command) => {
   switch (command) {
     case 'sync':
       await syncQuota(row)
+      break
+    case 'reset-device':
+      await resetDeviceIdentity(row)
       break
     case 'toggle-status':
       await toggleStatus(row)

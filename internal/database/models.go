@@ -77,6 +77,7 @@ type Token struct {
 	Description                 string         `gorm:"size:500" json:"description"`
 	TenantAddress               string         `gorm:"size:255;not null" json:"tenant_address"`
 	ProxyURL                    *string        `gorm:"size:255" json:"proxy_url,omitempty"`
+	PrivacySeed                 string         `gorm:"size:64" json:"-"`
 	Status                      string         `gorm:"size:20;default:active;index" json:"status"`
 	PoolStatus                  string         `gorm:"size:20;default:available;index" json:"pool_status"`
 	Weight                      int            `gorm:"default:1" json:"weight"`

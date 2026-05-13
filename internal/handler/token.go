@@ -119,6 +119,15 @@ func (h *TokenHandler) UnlockCooldown(c *gin.Context) {
 	Success(c, nil)
 }
 
+func (h *TokenHandler) ResetDeviceIdentity(c *gin.Context) {
+	token, err := h.svc.ResetPrivacySeed(c.Param("id"))
+	if err != nil {
+		Error(c, 500, err.Error())
+		return
+	}
+	SuccessWithMsg(c, "已重置该 Token 的伪机器码", token)
+}
+
 func (h *TokenHandler) Validate(c *gin.Context) {
 	tokenStr := c.Query("token")
 	if tokenStr == "" {

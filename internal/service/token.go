@@ -36,6 +36,9 @@ func NewTokenService(db *gorm.DB, cache *CacheService) *TokenService {
 
 func (s *TokenService) Create(token *database.Token) error {
 	token.ID = uuid.New().String()[:20]
+	if strings.TrimSpace(token.PrivacySeed) == "" {
+		token.PrivacySeed = newTokenPrivacySeed()
+	}
 	now := time.Now()
 	token.Status, token.PoolStatus = normalizeTokenState(token, now)
 	if token.Weight <= 0 {
@@ -112,6 +115,20 @@ func (s *TokenService) UnlockCooldown(id string) error {
 		return err
 	}
 	return s.RefreshTokenStateByID(id)
+}
+
+func (s *TokenService) ResetPrivacySeed(id string) (*database.Token, error) {
+	updates := map[string]interface{}{
+		"privacy_seed": newTokenPrivacySeed(),
+	}
+	if err := s.db.Model(&database.Token{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
+}
+
+func newTokenPrivacySeed() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
 func (s *TokenService) GetActiveTokens() ([]database.Token, error) {

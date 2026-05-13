@@ -339,6 +339,9 @@ func stableProfileSeed(token *database.Token) string {
 	if token == nil {
 		return ""
 	}
+	if seed := strings.TrimSpace(token.PrivacySeed); seed != "" {
+		return seed
+	}
 
 	parts := []string{token.ID, token.Name, token.TenantAddress}
 	if token.Email != nil && strings.TrimSpace(*token.Email) != "" {
