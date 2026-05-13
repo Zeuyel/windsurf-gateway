@@ -49,6 +49,10 @@ func (h *ProxyHandler) ForwardWithUserToken(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	apiKeyHeader := c.GetHeader("X-Api-Key")
 	requestPath := buildRequestPath(c)
+	if h.shouldSwallowTelemetry(requestPath) {
+		h.swallowTelemetry(c, requestID, requestPath)
+		return
+	}
 	requireGatewayUserAuth := shouldRequireGatewayUserAuthForPath(requestPath)
 	userToken, authSource := h.resolveGatewayUserToken(c, authHeader, apiKeyHeader, body)
 
@@ -140,6 +144,27 @@ func (h *ProxyHandler) ForwardWithSystemToken(c *gin.Context) {
 	}
 
 	h.forwardRequest(c, requestID, nil, backendToken, body)
+}
+
+func (h *ProxyHandler) shouldSwallowTelemetry(requestPath string) bool {
+	return h != nil && h.proxy != nil && h.proxy.BlockTelemetryEnabled() && isTelemetryEndpoint(requestPath)
+}
+
+func (h *ProxyHandler) swallowTelemetry(c *gin.Context, requestID, requestPath string) {
+	logger.Infof("[Privacy] swallowed telemetry request=%s method=%s path=%s user_agent=%q", requestID, c.Request.Method, requestPath, c.Request.UserAgent())
+
+	contentType := c.GetHeader("Content-Type")
+	if contentType == "" {
+		contentType = "application/proto"
+	}
+	c.Header("Content-Type", contentType)
+
+	if strings.Contains(strings.ToLower(contentType), "application/connect+proto") {
+		c.Status(http.StatusOK)
+		_, _ = c.Writer.Write([]byte{0, 0, 0, 0, 0})
+		return
+	}
+	c.Status(http.StatusOK)
 }
 
 func (h *ProxyHandler) forwardRequest(c *gin.Context, requestID string, user *database.User, backendToken *database.Token, body []byte) {
@@ -365,6 +390,49 @@ func shouldRequireWindsurfQuotaForPath(requestPath string) bool {
 func shouldRequireGatewayUserAuthForPath(requestPath string) bool {
 	switch stripQuery(requestPath) {
 	case "/exa.api_server_pb.ApiServerService/GetChatMessage":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTelemetryEndpoint(requestPath string) bool {
+	switch stripQuery(requestPath) {
+	case "/exa.product_analytics_pb.ProductAnalyticsService/RecordAnalyticsEvent",
+		"/exa.product_analytics_pb.ProductAnalyticsService/BatchRecordAnalyticsEvents",
+		"/exa.analytics_pb.AnalyticsService/RecordCommandUsage",
+		"/exa.analytics_pb.AnalyticsService/BatchRecordPrompts",
+		"/exa.analytics_pb.AnalyticsService/RecordCortexTrajectoryStep",
+		"/exa.analytics_pb.AnalyticsService/RecordTabTrajectoryStep",
+		"/exa.user_analytics_pb.UserAnalyticsService/Analytics",
+		"/exa.user_analytics_pb.UserAnalyticsService/GetDevinUserAnalytics",
+		"/exa.api_server_pb.ApiServerService/RecordAsyncTelemetry",
+		"/exa.api_server_pb.ApiServerService/RecordCortexGeneratorMetadata",
+		"/exa.api_server_pb.ApiServerService/RecordCortexExecutionMetadata",
+		"/exa.api_server_pb.ApiServerService/RecordTrajectorySegmentEvents",
+		"/exa.api_server_pb.ApiServerService/RecordCommitMessageSave",
+		"/exa.api_server_pb.ApiServerService/RecordCommitMessageGeneration",
+		"/exa.api_server_pb.ApiServerService/RecordGitTelemetry",
+		"/exa.api_server_pb.ApiServerService/RecordSearchDocOpen",
+		"/exa.api_server_pb.ApiServerService/RecordSearchResultsView",
+		"/exa.api_server_pb.ApiServerService/RecordCompletionExample",
+		"/exa.api_server_pb.ApiServerService/RecordProfilingData",
+		"/exa.api_server_pb.ApiServerService/RecordDebounce",
+		"/exa.api_server_pb.ApiServerService/BatchRecordPrompts",
+		"/exa.api_server_pb.ApiServerService/BatchRecordUserLastUpdateTimes",
+		"/exa.api_server_pb.ApiServerService/SubmitBugReport",
+		"/exa.api_server_pb.ApiServerService/UploadErrorTraces",
+		"/exa.language_server_pb.LanguageServerService/RecordSystemMetrics",
+		"/exa.language_server_pb.LanguageServerService/RecordSearchDocOpen",
+		"/exa.language_server_pb.LanguageServerService/RecordSearchResultsView",
+		"/exa.language_server_pb.LanguageServerService/RecordChatFeedback",
+		"/exa.language_server_pb.LanguageServerService/RecordUserGrep",
+		"/exa.language_server_pb.LanguageServerService/RecordLints",
+		"/exa.language_server_pb.LanguageServerService/RecordCommitMessageSave",
+		"/exa.language_server_pb.LanguageServerService/RecordUserStepSnapshot",
+		"/exa.language_server_pb.LanguageServerService/UploadRecentCommands",
+		"/exa.language_server_pb.LanguageServerService/SubmitBugReport",
+		"/exa.seat_management_pb.SeatManagementService/UpdateCodeSnippetTelemetry":
 		return true
 	default:
 		return false

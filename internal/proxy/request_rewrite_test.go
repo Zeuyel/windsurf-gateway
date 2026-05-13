@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestRewriteProtoAuthPayloadOnlyRewritesMetadataAPIKey(t *testing.T) {
+func TestRewriteProtoAuthPayloadSanitizesMetadata(t *testing.T) {
 	profile := upstreamAuthProfile{
 		BackendToken:            "sk-ws-01-backend",
 		StableSessionID:         "stable-session",
@@ -40,10 +40,9 @@ func TestRewriteProtoAuthPayloadOnlyRewritesMetadataAPIKey(t *testing.T) {
 	if bytes.Contains(rewritten, []byte(clientToken)) {
 		t.Fatal("gateway user token still present after rewrite")
 	}
-	for _, preserved := range []string{
+	for _, removed := range []string{
 		"client-session",
 		"127.0.0.1",
-		"connect-go/1.0",
 		"/home/user/.windsurf",
 		"user-123",
 		"jwt.jwt.jwt",
@@ -51,12 +50,21 @@ func TestRewriteProtoAuthPayloadOnlyRewritesMetadataAPIKey(t *testing.T) {
 		"client-device",
 		"team-1",
 	} {
-		if !bytes.Contains(rewritten, []byte(preserved)) {
-			t.Fatalf("expected non-auth metadata to be preserved: %s", preserved)
+		if bytes.Contains(rewritten, []byte(removed)) {
+			t.Fatalf("expected private metadata to be removed or replaced: %s", removed)
 		}
+	}
+	if !bytes.Contains(rewritten, []byte("connect-go/1.0")) {
+		t.Fatal("client user agent metadata should be preserved")
 	}
 	if !bytes.Contains(rewritten, []byte(profile.BackendToken)) {
 		t.Fatal("backend token missing after metadata rewrite")
+	}
+	if !bytes.Contains(rewritten, []byte(profile.StableSessionID)) {
+		t.Fatal("stable session id missing after metadata rewrite")
+	}
+	if !bytes.Contains(rewritten, []byte(profile.StableDeviceFingerprint)) {
+		t.Fatal("stable device fingerprint missing after metadata rewrite")
 	}
 }
 
@@ -203,8 +211,11 @@ func TestRewriteUpstreamAuthPayloadRewritesGetUserJwtMetadataProto(t *testing.T)
 	if !bytes.Contains(rewritten, []byte(profile.BackendToken)) {
 		t.Fatalf("expected rewritten payload to contain %s", profile.BackendToken)
 	}
-	if !bytes.Contains(rewritten, []byte("client-session")) {
-		t.Fatal("non-auth session metadata should be preserved")
+	if bytes.Contains(rewritten, []byte("client-session")) {
+		t.Fatal("client session metadata should be replaced")
+	}
+	if !bytes.Contains(rewritten, []byte(profile.StableSessionID)) {
+		t.Fatal("stable session metadata should be present")
 	}
 }
 

@@ -78,6 +78,10 @@ func (p *ProxyService) hasProxyConfigured(token *database.Token) bool {
 	return token != nil && token.ProxyURL != nil && *token.ProxyURL != ""
 }
 
+func (p *ProxyService) BlockTelemetryEnabled() bool {
+	return p != nil && p.config != nil && p.config.Proxy.BlockTelemetry
+}
+
 func (p *ProxyService) getClientPoolKey(token *database.Token) string {
 	if !p.hasProxyConfigured(token) {
 		return "direct"

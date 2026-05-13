@@ -184,3 +184,30 @@ func TestShouldRequireGatewayUserAuthForPath(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTelemetryEndpoint(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/exa.product_analytics_pb.ProductAnalyticsService/RecordAnalyticsEvent", want: true},
+		{path: "/exa.product_analytics_pb.ProductAnalyticsService/BatchRecordAnalyticsEvents", want: true},
+		{path: "/exa.analytics_pb.AnalyticsService/RecordCortexTrajectoryStep", want: true},
+		{path: "/exa.api_server_pb.ApiServerService/RecordAsyncTelemetry", want: true},
+		{path: "/exa.api_server_pb.ApiServerService/RecordCommitMessageSave", want: true},
+		{path: "/exa.language_server_pb.LanguageServerService/RecordUserGrep", want: true},
+		{path: "/exa.seat_management_pb.SeatManagementService/UpdateCodeSnippetTelemetry", want: true},
+		{path: "/exa.api_server_pb.ApiServerService/GetChatMessage", want: false},
+		{path: "/exa.seat_management_pb.SeatManagementService/GetUserStatus", want: false},
+		{path: "/exa.api_server_pb.ApiServerService/RecordChatPanelSession", want: false},
+		{path: "/exa.api_server_pb.ApiServerService/BatchRecordChatRequestRecords", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			if got := isTelemetryEndpoint(tc.path); got != tc.want {
+				t.Fatalf("isTelemetryEndpoint(%q) = %t, want %t", tc.path, got, tc.want)
+			}
+		})
+	}
+}

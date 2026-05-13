@@ -214,6 +214,34 @@ func rewriteJSONMetadataObject(metadata map[string]any, profile upstreamAuthProf
 	}
 
 	set("apiKey", profile.BackendToken)
+	if profile.StableSessionID != "" {
+		set("sessionId", profile.StableSessionID)
+		set("session_id", profile.StableSessionID)
+	}
+	if profile.StableDeviceFingerprint != "" {
+		set("deviceFingerprint", profile.StableDeviceFingerprint)
+		set("device_fingerprint", profile.StableDeviceFingerprint)
+	}
+
+	for _, key := range []string{
+		"sourceAddress",
+		"source_address",
+		"extensionPath",
+		"extension_path",
+		"userId",
+		"user_id",
+		"userJwt",
+		"user_jwt",
+		"forceTeamId",
+		"force_team_id",
+		"teamId",
+		"team_id",
+	} {
+		if _, ok := metadata[key]; ok {
+			delete(metadata, key)
+			changed = true
+		}
+	}
 
 	return changed
 }
@@ -439,7 +467,7 @@ func rewriteMetadataMessage(data []byte, profile upstreamAuthProfile) ([]byte, b
 
 		fieldNumber := int(tag >> 3)
 		wireType := int(tag & 0x7)
-		if fieldNumber == metadataFieldAPIKey {
+		if fieldNumber == metadataFieldAPIKey || fieldNumber == metadataFieldSessionID || fieldNumber == metadataFieldDeviceFingerprint {
 			seen[fieldNumber] = true
 		}
 
@@ -474,6 +502,31 @@ func rewriteMetadataMessage(data []byte, profile upstreamAuthProfile) ([]byte, b
 				if string(data[idx:end]) != profile.BackendToken {
 					changed = true
 				}
+			case metadataFieldSessionID:
+				if profile.StableSessionID != "" {
+					writeStringField(&out, fieldNumber, profile.StableSessionID)
+					if string(data[idx:end]) != profile.StableSessionID {
+						changed = true
+					}
+				} else {
+					out.Write(data[fieldStart:end])
+				}
+			case metadataFieldDeviceFingerprint:
+				if profile.StableDeviceFingerprint != "" {
+					writeStringField(&out, fieldNumber, profile.StableDeviceFingerprint)
+					if string(data[idx:end]) != profile.StableDeviceFingerprint {
+						changed = true
+					}
+				} else {
+					out.Write(data[fieldStart:end])
+				}
+			case metadataFieldSourceAddress,
+				metadataFieldExtensionPath,
+				metadataFieldUserID,
+				metadataFieldUserJWT,
+				metadataFieldForceTeamID,
+				metadataFieldTeamID:
+				changed = true
 			default:
 				out.Write(data[fieldStart:end])
 			}
@@ -491,6 +544,14 @@ func rewriteMetadataMessage(data []byte, profile upstreamAuthProfile) ([]byte, b
 
 	if !seen[metadataFieldAPIKey] {
 		writeStringField(&out, metadataFieldAPIKey, profile.BackendToken)
+		changed = true
+	}
+	if !seen[metadataFieldSessionID] && profile.StableSessionID != "" {
+		writeStringField(&out, metadataFieldSessionID, profile.StableSessionID)
+		changed = true
+	}
+	if !seen[metadataFieldDeviceFingerprint] && profile.StableDeviceFingerprint != "" {
+		writeStringField(&out, metadataFieldDeviceFingerprint, profile.StableDeviceFingerprint)
 		changed = true
 	}
 

@@ -80,6 +80,7 @@ type ProxyConfig struct {
 	ForwardDisabled       bool
 	EnableCustomUserAgent bool
 	PrivacyMode           bool
+	BlockTelemetry        bool
 	ScheduleTaskEnabled   bool
 }
 
@@ -156,6 +157,7 @@ func Load() (*Config, error) {
 			ForwardDisabled:       getEnvBool("FORWARD_DISABLED", false),
 			EnableCustomUserAgent: getEnvBool("ENABLE_CUSTOM_USER_AGENT", false),
 			PrivacyMode:           getEnvBool("PROXY_PRIVACY_MODE", true),
+			BlockTelemetry:        getEnvBool("PROXY_BLOCK_TELEMETRY", true),
 			ScheduleTaskEnabled:   getEnvBool("SCHEDULE_TASK_ENABLED", true),
 		},
 		Frontend: FrontendConfig{
